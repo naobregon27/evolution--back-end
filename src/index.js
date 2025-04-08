@@ -19,6 +19,10 @@ dotenv.config();
 // Inicializar Express
 const app = express();
 
+// Configuración para Render
+const isProduction = process.env.NODE_ENV === 'production';
+const PORT = process.env.PORT || 3000;
+
 // Conectar a la base de datos
 connectDB();
 
@@ -67,7 +71,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // Otros middlewares
-app.use(morgan('dev')); // Logging
+app.use(morgan(isProduction ? 'combined' : 'dev')); // Logging
 app.use(express.json({ limit: '10kb' })); // Limitar tamaño del body para evitar ataques
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
@@ -83,7 +87,8 @@ app.get('/', (req, res) => {
     success: true,
     message: 'API Evolution Backend', 
     version: '1.0.0',
-    documentation: '/api'
+    documentation: '/api',
+    environment: process.env.NODE_ENV
   });
 });
 
@@ -106,7 +111,7 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ 
     success: false, 
     message: err.status ? err.message : 'Error interno del servidor',
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    error: isProduction ? undefined : err.message
   });
 });
 
@@ -136,9 +141,8 @@ const actualizarEstadoSistema = async () => {
 // Programar la tarea para ejecutarse cada 5 minutos
 setInterval(actualizarEstadoSistema, 5 * 60 * 1000);
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  logger.info(`Servidor corriendo en puerto ${PORT}`);
+  logger.info(`Servidor corriendo en puerto ${PORT} en modo ${process.env.NODE_ENV || 'desarrollo'}`);
   
   // Ejecutar actualización inicial
   actualizarEstadoSistema();
