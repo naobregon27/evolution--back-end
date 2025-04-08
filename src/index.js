@@ -25,6 +25,10 @@ const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
 const PORT = process.env.PORT || 3000;
 
+// Configurar trust proxy para express-rate-limit
+// Esto es necesario para aplicaciones detrás de proxies como los de Render, Heroku, etc.
+app.set('trust proxy', 1);
+
 // Conectar a la base de datos
 connectDB();
 
@@ -76,6 +80,7 @@ const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
   max: 100, // limitar a 100 solicitudes por ventana
   standardHeaders: true,
+  legacyHeaders: false,
   message: {
     success: false,
     message: 'Demasiadas solicitudes, intente más tarde'
@@ -87,6 +92,8 @@ app.use('/api/', limiter);
 const authLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hora
   max: 10, // 10 intentos por IP
+  standardHeaders: true,
+  legacyHeaders: false,
   message: {
     success: false,
     message: 'Demasiados intentos de login, intente más tarde'
@@ -110,8 +117,9 @@ const corsOptions = {
     } else {
       // Para depuración
       logger.warn(`Solicitud CORS bloqueada: ${origin} no está permitido`);
-      callback(null, true); // Durante desarrollo, permitir todos los orígenes
-      // En producción, podrías usar: callback(new Error('No permitido por CORS'))
+      // Durante desarrollo o pruebas, permitir todos los orígenes
+      callback(null, true);
+      // En producción estricta: callback(new Error('No permitido por CORS'))
     }
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
