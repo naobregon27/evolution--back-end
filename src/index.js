@@ -13,6 +13,7 @@ import xss from 'xss-clean';
 import User from './models/User.js';
 import Local from './models/Local.js';
 import mongoose from 'mongoose';
+// import allCors from './middlewares/allCors.js'; // Importar el middleware de CORS sin restricciones
 
 // Configuración de variables de entorno
 dotenv.config();
@@ -27,16 +28,48 @@ const PORT = process.env.PORT || 3000;
 // Conectar a la base de datos
 connectDB();
 
+// ÚLTIMO RECURSO: usar middleware que permite todas las solicitudes CORS
+// app.use(allCors); // Descomenta esta línea si nada más funciona
+
+// Middleware específico para solicitudes preflight OPTIONS - DEBE IR ANTES DE OTROS MIDDLEWARES
+app.options('*', (req, res) => {
+  // Configurar headers CORS para solicitudes preflight
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Max-Age', '86400'); // 24 horas
+  // Responder exitosamente a la solicitud preflight
+  res.status(204).end();
+});
+
 // Middlewares de seguridad
 app.use(helmet()); // Seguridad básica de headers
+// Configurar CSP para que no bloquee solicitudes CORS
 app.use(helmet.contentSecurityPolicy({
   directives: {
-    defaultSrc: ["'self'"],
-    scriptSrc: ["'self'", "'unsafe-inline'"],
-    styleSrc: ["'self'", "'unsafe-inline'"],
-    imgSrc: ["'self'", "data:"],
+    defaultSrc: ["'self'", "*"],
+    scriptSrc: ["'self'", "'unsafe-inline'", "*"],
+    styleSrc: ["'self'", "'unsafe-inline'", "*"],
+    imgSrc: ["'self'", "data:", "*"],
+    connectSrc: ["'self'", "*"]  // Importante para CORS y fetch/XHR
   }
 }));
+
+// Middleware para depurar solicitudes CORS
+app.use((req, res, next) => {
+  logger.info(`Solicitud recibida: ${req.method} ${req.url} desde origen: ${req.headers.origin || 'no origin'}`);
+  
+  // Para las solicitudes preflight OPTIONS
+  if (req.method === 'OPTIONS') {
+    logger.info('Solicitud OPTIONS recibida - manejando preflight CORS');
+  }
+  
+  // Siempre añadir estos headers para CORS
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  next();
+});
 
 // Limitar solicitudes para prevenir ataques de fuerza bruta
 const limiter = rateLimit({
@@ -61,13 +94,32 @@ const authLimiter = rateLimit({
 });
 app.use('/api/users/login', authLimiter);
 
-// Configuración CORS más restrictiva
+// Configuración CORS más permisiva para desarrollo
 const corsOptions = {
-  origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  origin: function(origin, callback) {
+    // Permitir solicitudes sin origen (como aplicaciones móviles o Postman)
+    if (!origin) return callback(null, true);
+    
+    // Lista de orígenes permitidos
+    const allowedOrigins = process.env.ALLOWED_ORIGINS 
+      ? process.env.ALLOWED_ORIGINS.split(',') 
+      : ['http://localhost:5173', 'http://localhost:3000', 'https://evolution-frontend.vercel.app', 'https://evolution-frontend.netlify.app'];
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
+      callback(null, true);
+    } else {
+      // Para depuración
+      logger.warn(`Solicitud CORS bloqueada: ${origin} no está permitido`);
+      callback(null, true); // Durante desarrollo, permitir todos los orígenes
+      // En producción, podrías usar: callback(new Error('No permitido por CORS'))
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
-  maxAge: 86400 // 24 horas
+  maxAge: 86400, // 24 horas
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 };
 app.use(cors(corsOptions));
 
@@ -90,6 +142,20 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     documentation: '/api',
     environment: process.env.NODE_ENV
+  });
+});
+
+// Ruta específica para prueba de CORS
+app.get('/cors-test', (req, res) => {
+  // Logs adicionales para depuración
+  logger.info('Headers recibidos:');
+  logger.info(JSON.stringify(req.headers));
+  
+  res.json({
+    success: true,
+    message: 'Prueba de CORS exitosa',
+    origin: req.headers.origin || 'No origin',
+    headers: req.headers
   });
 });
 
