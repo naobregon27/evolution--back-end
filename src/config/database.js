@@ -4,6 +4,35 @@ import logger from './logger.js';
 
 dotenv.config();
 
+// Validar formato básico de la URI de MongoDB
+const validarMongoURI = (uri) => {
+  if (!uri) return false;
+  
+  // Verificar formato básico (mongodb:// o mongodb+srv://)
+  const formatoValido = uri.startsWith('mongodb://') || uri.startsWith('mongodb+srv://');
+  
+  if (!formatoValido) {
+    logger.error('El formato de MONGODB_URI es incorrecto. Debe comenzar con mongodb:// o mongodb+srv://');
+    return false;
+  }
+  
+  // Verificar que tenga usuario, contraseña y host
+  try {
+    const uriSinProtocolo = uri.replace(/^(mongodb):\/\/|^(mongodb\+srv):\/\//, '');
+    const [credenciales, resto] = uriSinProtocolo.split('@');
+    
+    if (!credenciales || !resto) {
+      logger.error('MONGODB_URI debe contener credenciales y host');
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    logger.error(`Error al validar MONGODB_URI: ${error.message}`);
+    return false;
+  }
+};
+
 // Opciones de configuración mejoradas para Mongoose
 const options = {
   serverSelectionTimeoutMS: 30000, // Aumentar timeout a 30 segundos
@@ -24,6 +53,18 @@ export const connectDB = async (retryCount = 5) => {
       throw new Error('La variable de entorno MONGODB_URI no está configurada');
     }
     
+    // Validar formato de la URI
+    if (!validarMongoURI(process.env.MONGODB_URI)) {
+      throw new Error('La variable de entorno MONGODB_URI tiene un formato incorrecto');
+    }
+    
+    // Mostrar URI parcial en logs (ocultando credenciales por seguridad)
+    const uriOculta = process.env.MONGODB_URI.replace(
+      /(mongodb|mongodb\+srv):\/\/([^:]+):([^@]+)@/,
+      '$1://$2:****@'
+    );
+    logger.info(`Conectando a: ${uriOculta}`);
+    
     // Conectar a MongoDB
     await mongoose.connect(process.env.MONGODB_URI, options);
     logger.info('Conexión exitosa a MongoDB');
@@ -33,6 +74,13 @@ export const connectDB = async (retryCount = 5) => {
     
   } catch (error) {
     logger.error(`Error al conectar a MongoDB: ${error.message}`);
+    
+    // Si el error es de autenticación o acceso, mostrar un mensaje más específico
+    if (error.message.includes('Authentication failed') || 
+        error.message.includes('not authorized') ||
+        error.message.includes('ECONNREFUSED')) {
+      logger.error('Problema de autenticación o acceso. Verifica credenciales y lista blanca de IPs en MongoDB Atlas');
+    }
     
     // Reintentar la conexión si aún tenemos intentos disponibles
     if (retryCount > 0) {

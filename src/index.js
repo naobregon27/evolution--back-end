@@ -156,11 +156,38 @@ const actualizarEstadoSistema = async () => {
 };
 
 // Programar la tarea para ejecutarse cada 5 minutos
-setInterval(actualizarEstadoSistema, 5 * 60 * 1000);
+let tareasProgramadas;
+
+// Esta función inicia las tareas programadas solo después de confirmar conexión exitosa a MongoDB
+const iniciarTareasProgramadas = () => {
+  // Verificar si ya existen tareas programadas para evitar duplicarlas
+  if (tareasProgramadas) {
+    clearInterval(tareasProgramadas);
+  }
+  
+  // Ejecutar actualización inicial después de confirmar conexión
+  actualizarEstadoSistema();
+  
+  // Programar ejecuciones futuras
+  tareasProgramadas = setInterval(actualizarEstadoSistema, 5 * 60 * 1000);
+  logger.info('Tareas programadas iniciadas correctamente');
+};
+
+// Escuchar el evento de conexión exitosa para iniciar tareas
+mongoose.connection.once('connected', () => {
+  logger.info('Conexión MongoDB establecida - Iniciando tareas programadas');
+  iniciarTareasProgramadas();
+});
+
+// Escuchar reconexión para reiniciar tareas si es necesario
+mongoose.connection.on('reconnected', () => {
+  logger.info('MongoDB reconectado - Reiniciando tareas programadas');
+  iniciarTareasProgramadas();
+});
 
 app.listen(PORT, () => {
   logger.info(`Servidor corriendo en puerto ${PORT} en modo ${process.env.NODE_ENV || 'desarrollo'}`);
   
-  // Ejecutar actualización inicial
-  actualizarEstadoSistema();
+  // Ya no ejecutamos actualizarEstadoSistema() aquí directamente
+  // Se ejecutará cuando MongoDB esté conectado
 }); 
