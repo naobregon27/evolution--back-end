@@ -158,7 +158,7 @@ const userSchema = new mongoose.Schema({
 });
 
 // Índices para mejorar el rendimiento
-userSchema.index({ email: 1 });
+// userSchema.index({ email: 1 }); // Eliminamos este índice porque ya está definido en el campo como unique
 userSchema.index({ role: 1 });
 userSchema.index({ activo: 1 });
 userSchema.index({ local: 1 });

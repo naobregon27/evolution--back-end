@@ -12,6 +12,7 @@ import mongoSanitize from 'express-mongo-sanitize';
 import xss from 'xss-clean';
 import User from './models/User.js';
 import Local from './models/Local.js';
+import mongoose from 'mongoose';
 
 // Configuración de variables de entorno
 dotenv.config();
@@ -118,23 +119,39 @@ app.use((err, req, res, next) => {
 // Función para actualizar usuarios inactivos y estadísticas
 const actualizarEstadoSistema = async () => {
   try {
+    // Verificar que hay conexión a MongoDB antes de proceder
+    if (mongoose.connection.readyState !== 1) {
+      logger.warn('No se puede actualizar estado de sistema - MongoDB no está conectado');
+      return;
+    }
+
     // Marcar como desconectados los usuarios inactivos por más de 30 minutos
-    const usuariosActualizados = await User.actualizarEstadoInactividad(30);
-    
-    if (usuariosActualizados > 0) {
-      logger.info(`Se actualizaron ${usuariosActualizados} usuarios a estado "desconectado" por inactividad`);
+    try {
+      const usuariosActualizados = await User.actualizarEstadoInactividad(30);
+      
+      if (usuariosActualizados > 0) {
+        logger.info(`Se actualizaron ${usuariosActualizados} usuarios a estado "desconectado" por inactividad`);
+      }
+    } catch (userError) {
+      logger.error(`Error al actualizar estado de inactividad: ${userError.message}`);
+      // No lanzamos el error para que no afecte a otras operaciones
     }
     
     // Actualizar estadísticas de locales (cada hora)
-    const ahora = new Date();
-    if (ahora.getMinutes() < 5) { // Ejecutar en los primeros 5 minutos de cada hora
-      const localesActualizados = await Local.actualizarTodasLasEstadisticas();
-      if (localesActualizados > 0) {
-        logger.info(`Se actualizaron estadísticas de ${localesActualizados} locales`);
+    try {
+      const ahora = new Date();
+      if (ahora.getMinutes() < 5) { // Ejecutar en los primeros 5 minutos de cada hora
+        const localesActualizados = await Local.actualizarTodasLasEstadisticas();
+        if (localesActualizados > 0) {
+          logger.info(`Se actualizaron estadísticas de ${localesActualizados} locales`);
+        }
       }
+    } catch (localError) {
+      logger.error(`Error al actualizar estadísticas de locales: ${localError.message}`);
     }
   } catch (error) {
-    logger.error(`Error en actualización automática: ${error.message}`);
+    logger.error(`Error general en actualización automática: ${error.message}`);
+    // No terminamos el proceso, simplemente registramos el error
   }
 };
 
