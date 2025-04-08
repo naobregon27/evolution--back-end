@@ -35,28 +35,69 @@ export const getAllUsers = async (req, res) => {
       filters.role = { $ne: 'superAdmin' };
     }
     
-    // Configurar para incluir usuarios inactivos
-    const query = User.find(filters)
-      .select('-password')
-      .populate('local', 'nombre direccion')
-      .populate('creadoPor', 'nombre email')
-      .skip(skip)
-      .limit(limit)
-      .sort({ createdAt: -1 });
-      
-    // Modificar la consulta para incluir inactivos
-    query.getQuery().includeInactive = true;
-    
-    // Ejecutar la consulta
-    const users = await query;
-    
-    // Contar total de registros para la paginación
+    // Contar total de registros para la paginación primero
     const total = await User.countDocuments(filters);
     
+    // Configurar query con includeInactive antes de find() para asegurar que funcione correctamente
+    const findQuery = { ...filters };
+    const options = { includeInactive: true }; // Asegurar incluir usuarios inactivos
+    
+    // Realizar búsqueda con todas las opciones
+    const users = await User.find(findQuery, null, options)
+      .select('-password')
+      .populate('local', 'nombre direccion telefono email')
+      .populate('creadoPor', 'nombre email')
+      .populate('ultimaModificacion.usuario', 'nombre email')
+      .skip(skip)
+      .limit(limit)
+      .sort({ createdAt: -1 })
+      .lean(); // Usar lean() para mejorar rendimiento y obtener objetos JS planos
+    
+    // Modificar la respuesta para mostrar todos los usuarios en formato plano
+    const usersData = users.map(user => ({
+      id: user._id.toString(),
+      nombre: user.nombre,
+      email: user.email,
+      role: user.role,
+      telefono: user.telefono || '',
+      direccion: user.direccion || '',
+      organizacion: user.organizacion || '',
+      permisos: user.permisos || {},
+      esAdministradorLocal: user.esAdministradorLocal || false,
+      local: user.local ? {
+        id: user.local._id?.toString(),
+        nombre: user.local.nombre,
+        direccion: user.local.direccion,
+        telefono: user.local.telefono,
+        email: user.local.email
+      } : null,
+      imagenPerfil: user.imagenPerfil,
+      verificado: user.verificado,
+      activo: user.activo,
+      enLinea: user.enLinea,
+      fechaCreacion: user.createdAt,
+      fechaActualizacion: user.updatedAt,
+      ultimaConexion: user.ultimaConexion,
+      creadoPor: user.creadoPor ? {
+        id: user.creadoPor._id?.toString(),
+        nombre: user.creadoPor.nombre,
+        email: user.creadoPor.email
+      } : null,
+      ultimaModificacion: user.ultimaModificacion ? {
+        usuario: user.ultimaModificacion.usuario ? {
+          id: user.ultimaModificacion.usuario._id?.toString(),
+          nombre: user.ultimaModificacion.usuario.nombre,
+          email: user.ultimaModificacion.usuario.email
+        } : null,
+        fecha: user.ultimaModificacion.fecha
+      } : null
+    }));
+    
+    // Respuesta con los usuarios completos
     res.status(200).json({
       success: true,
       data: {
-        users,
+        users: usersData,
         pagination: {
           total,
           page,
