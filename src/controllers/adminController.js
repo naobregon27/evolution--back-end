@@ -53,45 +53,92 @@ export const getAllUsers = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean(); // Usar lean() para mejorar rendimiento y obtener objetos JS planos
     
+    // Obtener conteo de usuarios por local para administradores
+    const localUserCounts = {};
+    
+    // Sólo realizar el conteo cuando es relevante (para admins y superAdmins)
+    if (req.userRole === 'admin' || req.userRole === 'superAdmin') {
+      // Obtener los IDs de locales únicos de la lista de usuarios
+      const localIds = [...new Set(users
+        .filter(user => user.local && user.role === 'admin')
+        .map(user => user.local._id.toString()))];
+        
+      // Para cada local, contar sus usuarios regulares
+      for (const localId of localIds) {
+        const count = await User.countDocuments({
+          local: localId,
+          role: 'usuario',
+          activo: true,
+          includeInactive: false
+        });
+        localUserCounts[localId] = count;
+      }
+      
+      // Si es admin, obtener el conteo específico para su local
+      if (req.userRole === 'admin' && req.user.local) {
+        const adminLocalId = req.user.local.toString();
+        if (!localUserCounts[adminLocalId]) {
+          localUserCounts[adminLocalId] = await User.countDocuments({
+            local: adminLocalId,
+            role: 'usuario',
+            activo: true
+          });
+        }
+      }
+    }
+    
     // Modificar la respuesta para mostrar todos los usuarios en formato plano
-    const usersData = users.map(user => ({
-      id: user._id.toString(),
-      nombre: user.nombre,
-      email: user.email,
-      role: user.role,
-      telefono: user.telefono || '',
-      direccion: user.direccion || '',
-      organizacion: user.organizacion || '',
-      permisos: user.permisos || {},
-      esAdministradorLocal: user.esAdministradorLocal || false,
-      local: user.local ? {
-        id: user.local._id?.toString(),
-        nombre: user.local.nombre,
-        direccion: user.local.direccion,
-        telefono: user.local.telefono,
-        email: user.local.email
-      } : null,
-      imagenPerfil: user.imagenPerfil,
-      verificado: user.verificado,
-      activo: user.activo,
-      enLinea: user.enLinea,
-      fechaCreacion: user.createdAt,
-      fechaActualizacion: user.updatedAt,
-      ultimaConexion: user.ultimaConexion,
-      creadoPor: user.creadoPor ? {
-        id: user.creadoPor._id?.toString(),
-        nombre: user.creadoPor.nombre,
-        email: user.creadoPor.email
-      } : null,
-      ultimaModificacion: user.ultimaModificacion ? {
-        usuario: user.ultimaModificacion.usuario ? {
-          id: user.ultimaModificacion.usuario._id?.toString(),
-          nombre: user.ultimaModificacion.usuario.nombre,
-          email: user.ultimaModificacion.usuario.email
+    const usersData = users.map(user => {
+      // Obtener el conteo de usuarios para este local si es admin
+      let usuariosEnLocal = null;
+      if (user.role === 'admin' && user.local) {
+        const localId = user.local._id.toString();
+        usuariosEnLocal = localUserCounts[localId] || 0;
+      }
+      
+      return {
+        id: user._id.toString(),
+        nombre: user.nombre,
+        email: user.email,
+        role: user.role,
+        telefono: user.telefono || '',
+        direccion: user.direccion || '',
+        organizacion: user.organizacion || '',
+        permisos: user.permisos || {},
+        esAdministradorLocal: user.esAdministradorLocal || false,
+        local: user.local ? {
+          id: user.local._id?.toString(),
+          nombre: user.local.nombre,
+          direccion: user.local.direccion,
+          telefono: user.local.telefono,
+          email: user.local.email,
+          // Incluir conteo de usuarios si es administrador
+          usuariosCount: user.role === 'admin' ? usuariosEnLocal : undefined
         } : null,
-        fecha: user.ultimaModificacion.fecha
-      } : null
-    }));
+        imagenPerfil: user.imagenPerfil,
+        verificado: user.verificado,
+        activo: user.activo,
+        enLinea: user.enLinea,
+        fechaCreacion: user.createdAt,
+        fechaActualizacion: user.updatedAt,
+        ultimaConexion: user.ultimaConexion,
+        creadoPor: user.creadoPor ? {
+          id: user.creadoPor._id?.toString(),
+          nombre: user.creadoPor.nombre,
+          email: user.creadoPor.email
+        } : null,
+        ultimaModificacion: user.ultimaModificacion ? {
+          usuario: user.ultimaModificacion.usuario ? {
+            id: user.ultimaModificacion.usuario._id?.toString(),
+            nombre: user.ultimaModificacion.usuario.nombre,
+            email: user.ultimaModificacion.usuario.email
+          } : null,
+          fecha: user.ultimaModificacion.fecha
+        } : null,
+        // Añadir el conteo directamente en el usuario si es admin
+        usuariosEnLocal: user.role === 'admin' ? usuariosEnLocal : undefined
+      };
+    });
     
     // Respuesta con los usuarios completos
     res.status(200).json({
@@ -542,10 +589,11 @@ export const toggleUserStatus = async (req, res) => {
     const { userId } = req.params;
     const { activo } = req.body;
     
-    // Buscar el usuario
-    const user = await User.findById(userId).populate('local', 'nombre');
+    // Modificar la consulta para incluir usuarios inactivos
+    const user = await User.findOne({ _id: userId, includeInactive: true }).populate('local', 'nombre');
     
     if (!user) {
+      logger.warn(`Usuario no encontrado: ${userId}`);
       return res.status(404).json({
         success: false,
         message: 'Usuario no encontrado'
@@ -610,6 +658,9 @@ export const toggleUserStatus = async (req, res) => {
     };
     
     await user.save();
+    
+    // Agregar logging para depuración
+    logger.info(`Usuario ${userId} ${activo ? 'activado' : 'desactivado'} exitosamente por ${req.userId}`);
     
     res.status(200).json({
       success: true,
