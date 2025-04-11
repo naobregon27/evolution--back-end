@@ -36,10 +36,7 @@ const userSchema = new mongoose.Schema({
   local: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Local',
-    // Requerido para admins, opcional para superAdmin (que gestiona todo el sistema)
-    required: function() {
-      return this.role === 'admin' || this.role === 'usuario';
-    }
+    required: false
   },
   esAdministradorLocal: {
     type: Boolean,

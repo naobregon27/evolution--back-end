@@ -219,6 +219,9 @@ export const createUser = async (req, res) => {
   try {
     const { nombre, email, password, role, telefono, direccion, organizacion, local } = req.body;
     
+    // Tratar local como null si es cadena vacía
+    const localId = local === '' ? null : local;
+    
     // Verificar límite de superAdmins si se está creando uno nuevo
     if (role === 'superAdmin') {
       const superAdminsCount = await User.countDocuments({ role: 'superAdmin' });
@@ -240,23 +243,22 @@ export const createUser = async (req, res) => {
         });
       }
       
-      // Debe asignar usuarios a su propio local
-      if (!local || local !== req.user.local.toString()) {
-        // Forzar asignación al local del admin
-        req.body.local = req.user.local;
-      }
-    } else if (req.userRole === 'superAdmin') {
-      // Si es superAdmin y crea un admin, debe asignarle un local
-      if (role === 'admin' && !local) {
-        return res.status(400).json({
+      // Si se especifica un local, verificar que sea el del admin
+      if (localId && localId !== req.user.local.toString()) {
+        return res.status(403).json({
           success: false,
-          message: 'Debe asignar un local al administrador'
+          message: 'Solo puede asignar usuarios a su propio local/marca'
         });
       }
       
-      // Verificar que el local exista
-      if (local) {
-        const localExiste = await Local.findById(local);
+      // Asignar local del admin solo si se especifica en la petición
+      if (localId === req.user.local.toString()) {
+        req.body.local = req.user.local;
+      }
+    } else if (req.userRole === 'superAdmin') {
+      // Verificar que el local exista si se especifica
+      if (localId) {
+        const localExiste = await Local.findById(localId);
         if (!localExiste) {
           return res.status(404).json({
             success: false,
@@ -275,13 +277,12 @@ export const createUser = async (req, res) => {
       });
     }
     
-    // Crear el usuario
-    const newUser = await User.create({
+    // Preparar datos del usuario
+    const userData = {
       nombre,
       email,
       password,
       role: role || 'usuario',
-      local: req.body.local || local,
       telefono,
       direccion,
       organizacion,
@@ -293,9 +294,17 @@ export const createUser = async (req, res) => {
         usuario: req.userId,
         fecha: Date.now()
       }
-    });
+    };
     
-    // Si se creó un admin, marcarlo como administrador del local
+    // Asignar local solo si está presente y no es cadena vacía
+    if (req.body.local && req.body.local !== '' || localId) {
+      userData.local = req.body.local !== '' ? req.body.local : localId;
+    }
+    
+    // Crear el usuario
+    const newUser = await User.create(userData);
+    
+    // Si se creó un admin con local asignado, marcarlo como administrador del local
     if (newUser.role === 'admin' && newUser.local) {
       newUser.esAdministradorLocal = true;
       await newUser.save();

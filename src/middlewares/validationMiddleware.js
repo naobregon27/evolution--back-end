@@ -1,4 +1,5 @@
 import { body, param, validationResult } from 'express-validator';
+import mongoose from 'mongoose';
 
 // Validación para registro de usuario
 export const validateRegister = [
@@ -151,7 +152,17 @@ export const validateCreateUser = [
   
   body('local')
     .optional()
-    .isMongoId().withMessage('ID de local no válido'),
+    .custom((value) => {
+      // Permitir cadena vacía o null
+      if (value === '' || value === null) {
+        return true;
+      }
+      // Verificar si es un ID de MongoDB válido
+      if (!mongoose.Types.ObjectId.isValid(value)) {
+        throw new Error('ID de local no válido');
+      }
+      return true;
+    }),
   
   (req, res, next) => {
     const errors = validationResult(req);
@@ -198,7 +209,17 @@ export const validateUpdateUser = [
   
   body('local')
     .optional()
-    .isMongoId().withMessage('ID de local no válido'),
+    .custom((value) => {
+      // Permitir cadena vacía o null
+      if (value === '' || value === null) {
+        return true;
+      }
+      // Verificar si es un ID de MongoDB válido
+      if (!mongoose.Types.ObjectId.isValid(value)) {
+        throw new Error('ID de local no válido');
+      }
+      return true;
+    }),
   
   (req, res, next) => {
     const errors = validationResult(req);
