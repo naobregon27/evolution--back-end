@@ -393,6 +393,31 @@ export const validateAssignAdmin = [
     .notEmpty().withMessage('El ID de usuario es obligatorio')
     .isMongoId().withMessage('ID de usuario no válido'),
   
+  body('changeRole')
+    .optional()
+    .isBoolean().withMessage('El valor debe ser true o false'),
+  
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        success: false, 
+        errors: errors.array() 
+      });
+    }
+    next();
+  }
+];
+
+// Validación para asignar usuario a un local (sin cambiar rol)
+export const validateAssignUserToLocal = [
+  param('localId')
+    .isMongoId().withMessage('ID de local no válido'),
+  
+  body('userId')
+    .notEmpty().withMessage('El ID de usuario es obligatorio')
+    .isMongoId().withMessage('ID de usuario no válido'),
+  
   (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

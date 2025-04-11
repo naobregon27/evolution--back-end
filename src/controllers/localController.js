@@ -358,7 +358,7 @@ export const getLocalUsers = async (req, res) => {
 export const assignLocalAdmin = async (req, res) => {
   try {
     const { localId } = req.params;
-    const { userId } = req.body;
+    const { userId, changeRole } = req.body;
     
     // Verificar si el local existe
     const local = await Local.findById(localId);
@@ -380,26 +380,81 @@ export const assignLocalAdmin = async (req, res) => {
       });
     }
     
-    // Solo superAdmin puede asignar administradores
+    // Verificar permisos - superAdmin puede asignar cualquier usuario
+    // Admin solo puede asignar usuarios a su propio local
     if (req.userRole !== 'superAdmin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Solo el superAdmin puede asignar administradores a un local/marca'
+      if (req.userRole !== 'admin') {
+        return res.status(403).json({
+          success: false,
+          message: 'No tiene permisos para asignar usuarios a un local/marca'
+        });
+      }
+      
+      // Si es admin, verificar que esté asignando a su propio local
+      if (!req.user.local || req.user.local.toString() !== localId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Solo puede asignar usuarios a su propio local/marca'
+        });
+      }
+      
+      // Admin no puede convertir a otros en admin
+      if (changeRole === true) {
+        return res.status(403).json({
+          success: false,
+          message: 'Solo el superAdmin puede convertir usuarios en administradores'
+        });
+      }
+    }
+    
+    // Guardar el rol actual para verificar después si cambió
+    const rolAnterior = usuario.role;
+    
+    // Actualizar el local del usuario
+    usuario.local = localId;
+    usuario.activo = true; // Asegurarnos que está activo
+    
+    // Solo superAdmin puede cambiar el rol a admin y solo si se especifica explícitamente
+    if (changeRole === true && req.userRole === 'superAdmin') {
+      usuario.role = 'admin';
+      usuario.esAdministradorLocal = true;
+      
+      // Verificar si el local ya tiene administradores
+      const adminCount = await User.countDocuments({
+        role: 'admin',
+        local: localId,
+        activo: true,
+        _id: { $ne: usuario._id } // Excluir al usuario actual del conteo
+      });
+      
+      await usuario.save();
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Administrador asignado exitosamente al local/marca',
+        data: {
+          adminCount: adminCount + 1,
+          isFirstAdmin: adminCount === 0,
+          usuario: {
+            _id: usuario._id,
+            nombre: usuario.nombre,
+            email: usuario.email,
+            role: usuario.role,
+            local: usuario.local
+          }
+        }
       });
     }
     
-    // Verificar si el local ya tiene administradores
-    const adminCount = await User.countDocuments({
-      role: 'admin',
-      local: localId,
-      activo: true
-    });
+    // Si no se especificó cambiar el rol, mantener el rol actual
+    // Solo actualizamos esAdministradorLocal si el rol es "admin"
+    if (usuario.role === 'admin') {
+      usuario.esAdministradorLocal = true;
+    } else {
+      usuario.esAdministradorLocal = false;
+    }
     
-    // Actualizar el usuario
-    usuario.role = 'admin';
-    usuario.local = localId;
-    usuario.esAdministradorLocal = true;
-    usuario.activo = true; // Asegurarnos que está activo
+    // Registrar quien modificó
     usuario.ultimaModificacion = {
       usuario: req.userId,
       fecha: Date.now()
@@ -409,17 +464,22 @@ export const assignLocalAdmin = async (req, res) => {
     
     res.status(200).json({
       success: true,
-      message: 'Administrador asignado exitosamente al local/marca',
+      message: 'Usuario asignado exitosamente al local/marca',
       data: {
-        adminCount: adminCount + 1,
-        isFirstAdmin: adminCount === 0
+        usuario: {
+          _id: usuario._id,
+          nombre: usuario.nombre,
+          email: usuario.email,
+          role: usuario.role,
+          local: usuario.local
+        }
       }
     });
   } catch (error) {
-    logger.error(`Error asignando administrador: ${error.message}`);
+    logger.error(`Error asignando usuario al local: ${error.message}`);
     res.status(500).json({
       success: false,
-      message: 'Error al asignar administrador al local/marca',
+      message: 'Error al asignar usuario al local/marca',
       error: error.message
     });
   }
@@ -572,6 +632,76 @@ export const getLocalUserStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al obtener estadísticas de usuarios por local',
+      error: error.message
+    });
+  }
+};
+
+// Asignar usuario a un local (sin cambiar rol)
+export const assignUserToLocal = async (req, res) => {
+  try {
+    const { localId } = req.params;
+    const { userId } = req.body;
+    
+    // Verificar si el local existe
+    const local = await Local.findById(localId);
+    
+    if (!local) {
+      return res.status(404).json({
+        success: false,
+        message: 'Local/Marca no encontrado'
+      });
+    }
+    
+    // Verificar si el usuario existe
+    const usuario = await User.findById(userId);
+    
+    if (!usuario) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado'
+      });
+    }
+    
+    // Verificar permisos - solo superAdmin o admin del local pueden asignar usuarios
+    if (req.userRole !== 'superAdmin' && 
+        (req.userRole !== 'admin' || 
+         !req.user.local || 
+         req.user.local.toString() !== localId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tiene permisos para asignar usuarios a este local/marca'
+      });
+    }
+    
+    // Actualizar el usuario (solo cambiamos el local, mantenemos el rol)
+    usuario.local = localId;
+    usuario.activo = true; // Asegurarnos que está activo
+    usuario.ultimaModificacion = {
+      usuario: req.userId,
+      fecha: Date.now()
+    };
+    
+    await usuario.save();
+    
+    res.status(200).json({
+      success: true,
+      message: 'Usuario asignado exitosamente al local/marca',
+      data: {
+        usuario: {
+          _id: usuario._id,
+          nombre: usuario.nombre,
+          email: usuario.email,
+          role: usuario.role,
+          local: usuario.local
+        }
+      }
+    });
+  } catch (error) {
+    logger.error(`Error asignando usuario al local: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Error al asignar usuario al local/marca',
       error: error.message
     });
   }

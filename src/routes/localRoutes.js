@@ -8,7 +8,8 @@ import {
   getLocalUsers, 
   assignLocalAdmin,
   unassignUserFromLocal,
-  getLocalUserStats
+  getLocalUserStats,
+  assignUserToLocal
 } from '../controllers/localController.js';
 import { 
   verifyToken, 
@@ -20,7 +21,8 @@ import {
   validateCreateLocal, 
   validateUpdateLocal, 
   validateToggleStatus, 
-  validateAssignAdmin 
+  validateAssignAdmin,
+  validateAssignUserToLocal
 } from '../middlewares/validationMiddleware.js';
 
 const router = Router();
@@ -69,10 +71,10 @@ router.get('/:localId/usuarios', verifyToken, isAdmin, getLocalUsers);
 
 /**
  * @route POST /api/locales/:localId/admin
- * @desc Asignar un administrador a un local/marca
- * @access Privado (solo superAdmin)
+ * @desc Asignar un usuario a un local/marca (superAdmin puede convertir en admin con changeRole=true)
+ * @access Privado (superAdmin y admin del local)
  */
-router.post('/:localId/admin', verifyToken, isSuperAdmin, validateAssignAdmin, assignLocalAdmin);
+router.post('/:localId/admin', verifyToken, isAdmin, validateAssignAdmin, assignLocalAdmin);
 
 /**
  * @route DELETE /api/locales/:localId/usuarios/:userId
