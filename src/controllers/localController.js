@@ -221,7 +221,7 @@ export const toggleLocalStatus = async (req, res) => {
     // Si se va a desactivar, verificar si tiene usuarios activos
     if (activo === false) {
       const usuariosActivos = await User.countDocuments({ 
-        local: localId, 
+        locales: localId, 
         activo: true 
       });
       
@@ -271,9 +271,8 @@ export const getLocalUsers = async (req, res) => {
       });
     }
     
-    // Si es admin, verificar que sea de su local
-    if (req.userRole === 'admin' && 
-        (!req.user.local || req.user.local.toString() !== local._id.toString())) {
+    // Si es admin, verificar que pertenezca a este local
+    if (req.userRole === 'admin' && !req.user.perteneceALocal(localId)) {
       return res.status(403).json({
         success: false,
         message: 'No tiene acceso a este local/marca'
@@ -286,7 +285,7 @@ export const getLocalUsers = async (req, res) => {
     const skip = (page - 1) * limit;
     
     // Filtros
-    const filters = { local: localId };
+    const filters = { locales: localId };
     
     if (req.query.role) filters.role = req.query.role;
     if (req.query.activo === 'true') filters.activo = true;
@@ -309,7 +308,7 @@ export const getLocalUsers = async (req, res) => {
     
     // Obtener estadísticas de usuarios del local
     const stats = await User.aggregate([
-      { $match: { local: mongoose.Types.ObjectId.createFromHexString(localId) } },
+      { $match: { locales: mongoose.Types.ObjectId.createFromHexString(localId) } },
       { 
         $group: {
           _id: null,
@@ -391,10 +390,10 @@ export const assignLocalAdmin = async (req, res) => {
       }
       
       // Si es admin, verificar que esté asignando a su propio local
-      if (!req.user.local || req.user.local.toString() !== localId) {
+      if (!req.user.perteneceALocal(localId)) {
         return res.status(403).json({
           success: false,
-          message: 'Solo puede asignar usuarios a su propio local/marca'
+          message: 'Solo puede asignar usuarios a sus propios locales/marcas'
         });
       }
       
@@ -410,8 +409,11 @@ export const assignLocalAdmin = async (req, res) => {
     // Guardar el rol actual para verificar después si cambió
     const rolAnterior = usuario.role;
     
-    // Actualizar el local del usuario
-    usuario.local = localId;
+    // Agregar el local al usuario si no lo tiene ya
+    if (!usuario.perteneceALocal(localId)) {
+      await usuario.agregarLocal(localId);
+    }
+    
     usuario.activo = true; // Asegurarnos que está activo
     
     // Solo superAdmin puede cambiar el rol a admin y solo si se especifica explícitamente
@@ -422,7 +424,7 @@ export const assignLocalAdmin = async (req, res) => {
       // Verificar si el local ya tiene administradores
       const adminCount = await User.countDocuments({
         role: 'admin',
-        local: localId,
+        locales: localId,
         activo: true,
         _id: { $ne: usuario._id } // Excluir al usuario actual del conteo
       });
@@ -440,7 +442,8 @@ export const assignLocalAdmin = async (req, res) => {
             nombre: usuario.nombre,
             email: usuario.email,
             role: usuario.role,
-            local: usuario.local
+            locales: usuario.locales,
+            primaryLocal: usuario.primaryLocal
           }
         }
       });
@@ -471,7 +474,8 @@ export const assignLocalAdmin = async (req, res) => {
           nombre: usuario.nombre,
           email: usuario.email,
           role: usuario.role,
-          local: usuario.local
+          locales: usuario.locales,
+          primaryLocal: usuario.primaryLocal
         }
       }
     });
@@ -511,7 +515,7 @@ export const unassignUserFromLocal = async (req, res) => {
     }
     
     // Verificar que el usuario pertenezca al local
-    if (!usuario.local || usuario.local.toString() !== localId) {
+    if (!usuario.perteneceALocal(localId)) {
       return res.status(400).json({
         success: false,
         message: 'El usuario no está asignado a este local/marca'
@@ -521,9 +525,7 @@ export const unassignUserFromLocal = async (req, res) => {
     // Verificar permisos
     if (req.userRole === 'admin') {
       // Admin solo puede desasignar usuarios regulares de su local
-      if (usuario.role !== 'usuario' || 
-          !req.user.local || 
-          req.user.local.toString() !== localId) {
+      if (usuario.role !== 'usuario' || !req.user.perteneceALocal(localId)) {
         return res.status(403).json({
           success: false,
           message: 'No tiene permisos para desasignar este usuario'
@@ -545,10 +547,15 @@ export const unassignUserFromLocal = async (req, res) => {
       });
     }
     
-    // Desasignar al usuario (se necesitaría otro lugar para asignarlo)
-    usuario.local = null;
-    usuario.activo = false; // Desactivar al usuario al desasignarlo
-    usuario.enLinea = false; // Desconectar al usuario
+    // Desasignar al usuario del local
+    await usuario.removerLocal(localId);
+    
+    // Si el usuario se queda sin locales, desactivarlo
+    if (!usuario.locales || usuario.locales.length === 0) {
+      usuario.activo = false; // Desactivar al usuario al desasignarlo
+      usuario.enLinea = false; // Desconectar al usuario
+    }
+    
     usuario.ultimaModificacion = {
       usuario: req.userId,
       fecha: Date.now()
@@ -573,13 +580,13 @@ export const unassignUserFromLocal = async (req, res) => {
 // Obtener estadísticas de usuarios por local
 export const getLocalUserStats = async (req, res) => {
   try {
-    // Si es admin, solo puede ver estadísticas de su local
+    // Si es admin, solo puede ver estadísticas de sus locales
     let match = {};
     
-    if (req.userRole === 'admin' && req.user.local) {
-      match = { local: mongoose.Types.ObjectId.createFromHexString(req.user.local.toString()) };
+    if (req.userRole === 'admin' && req.user.locales && req.user.locales.length > 0) {
+      match = { locales: { $in: req.user.locales } };
     } else if (req.params.localId) {
-      match = { local: mongoose.Types.ObjectId.createFromHexString(req.params.localId) };
+      match = { locales: mongoose.Types.ObjectId.createFromHexString(req.params.localId) };
     }
     
     // Obtener estadísticas
@@ -587,7 +594,7 @@ export const getLocalUserStats = async (req, res) => {
       { $match: match },
       { 
         $group: {
-          _id: '$local',
+          _id: '$locales',
           total: { $sum: 1 },
           activos: { $sum: { $cond: [{ $eq: ["$activo", true] }, 1, 0] } },
           enLinea: { $sum: { $cond: [{ $eq: ["$enLinea", true] }, 1, 0] } },
@@ -665,17 +672,18 @@ export const assignUserToLocal = async (req, res) => {
     
     // Verificar permisos - solo superAdmin o admin del local pueden asignar usuarios
     if (req.userRole !== 'superAdmin' && 
-        (req.userRole !== 'admin' || 
-         !req.user.local || 
-         req.user.local.toString() !== localId)) {
+        (req.userRole !== 'admin' || !req.user.perteneceALocal(localId))) {
       return res.status(403).json({
         success: false,
         message: 'No tiene permisos para asignar usuarios a este local/marca'
       });
     }
     
-    // Actualizar el usuario (solo cambiamos el local, mantenemos el rol)
-    usuario.local = localId;
+    // Agregar el local al usuario si no lo tiene ya
+    if (!usuario.perteneceALocal(localId)) {
+      await usuario.agregarLocal(localId);
+    }
+    
     usuario.activo = true; // Asegurarnos que está activo
     usuario.ultimaModificacion = {
       usuario: req.userId,
@@ -693,7 +701,8 @@ export const assignUserToLocal = async (req, res) => {
           nombre: usuario.nombre,
           email: usuario.email,
           role: usuario.role,
-          local: usuario.local
+          locales: usuario.locales,
+          primaryLocal: usuario.primaryLocal
         }
       }
     });
