@@ -26,12 +26,16 @@ export const getAllUsers = async (req, res) => {
         { email: { $regex: req.query.search, $options: 'i' } }
       ];
     }
-    if (req.query.local) filters.local = req.query.local;
+    if (req.query.local) {
+      // Buscar usuarios que pertenezcan a este local
+      filters.locales = req.query.local;
+    }
     
-    // Si el usuario es admin, restringir la vista a su local y no mostrar superAdmins
+    // Si el usuario es admin, restringir la vista a sus locales y no mostrar superAdmins
     if (req.userRole === 'admin') {
-      if (req.user.local) {
-        filters.local = req.user.local;
+      if (req.user.locales && req.user.locales.length > 0) {
+        // Mostrar usuarios que pertenezcan a cualquiera de los locales del admin
+        filters.locales = { $in: req.user.locales };
       }
       filters.role = { $ne: 'superAdmin' };
     }
@@ -46,7 +50,8 @@ export const getAllUsers = async (req, res) => {
     // Realizar búsqueda con todas las opciones
     const users = await User.find(findQuery, null, options)
       .select('-password')
-      .populate('local', 'nombre direccion telefono email')
+      .populate('locales', 'nombre direccion telefono email')
+      .populate('localPrincipal', 'nombre direccion')
       .populate('creadoPor', 'nombre email')
       .populate('ultimaModificacion.usuario', 'nombre email')
       .skip(skip)
@@ -61,13 +66,13 @@ export const getAllUsers = async (req, res) => {
     if (req.userRole === 'admin' || req.userRole === 'superAdmin') {
       // Obtener los IDs de locales únicos de la lista de usuarios
       const localIds = [...new Set(users
-        .filter(user => user.local && user.role === 'admin')
-        .map(user => user.local._id.toString()))];
+        .filter(user => user.locales && user.locales.length > 0 && user.role === 'admin')
+        .flatMap(user => user.locales.map(local => local._id.toString())))];
         
       // Para cada local, contar sus usuarios regulares
       for (const localId of localIds) {
         const count = await User.countDocuments({
-          local: localId,
+          locales: localId,
           role: 'usuario',
           activo: true,
           includeInactive: false
@@ -75,15 +80,17 @@ export const getAllUsers = async (req, res) => {
         localUserCounts[localId] = count;
       }
       
-      // Si es admin, obtener el conteo específico para su local
-      if (req.userRole === 'admin' && req.user.local) {
-        const adminLocalId = req.user.local.toString();
-        if (!localUserCounts[adminLocalId]) {
-          localUserCounts[adminLocalId] = await User.countDocuments({
-            local: adminLocalId,
-            role: 'usuario',
-            activo: true
-          });
+      // Si es admin, obtener el conteo específico para sus locales
+      if (req.userRole === 'admin' && req.user.locales && req.user.locales.length > 0) {
+        for (const adminLocal of req.user.locales) {
+          const adminLocalId = adminLocal.toString();
+          if (!localUserCounts[adminLocalId]) {
+            localUserCounts[adminLocalId] = await User.countDocuments({
+              locales: adminLocalId,
+              role: 'usuario',
+              activo: true
+            });
+          }
         }
       }
     }
@@ -92,9 +99,12 @@ export const getAllUsers = async (req, res) => {
     const usersData = users.map(user => {
       // Obtener el conteo de usuarios para este local si es admin
       let usuariosEnLocal = null;
-      if (user.role === 'admin' && user.local) {
-        const localId = user.local._id.toString();
-        usuariosEnLocal = localUserCounts[localId] || 0;
+      if (user.role === 'admin' && user.locales && user.locales.length > 0) {
+        // Sumar usuarios de todos los locales que administra
+        usuariosEnLocal = user.locales.reduce((sum, local) => {
+          const localId = local._id.toString();
+          return sum + (localUserCounts[localId] || 0);
+        }, 0);
       }
       
       return {
@@ -107,14 +117,17 @@ export const getAllUsers = async (req, res) => {
         organizacion: user.organizacion || '',
         permisos: user.permisos || {},
         esAdministradorLocal: user.esAdministradorLocal || false,
-        local: user.local ? {
-          id: user.local._id?.toString(),
-          nombre: user.local.nombre,
-          direccion: user.local.direccion,
-          telefono: user.local.telefono,
-          email: user.local.email,
-          // Incluir conteo de usuarios si es administrador
-          usuariosCount: user.role === 'admin' ? usuariosEnLocal : undefined
+        locales: user.locales ? user.locales.map(local => ({
+          id: local._id?.toString(),
+          nombre: local.nombre,
+          direccion: local.direccion,
+          telefono: local.telefono,
+          email: local.email
+        })) : [],
+        localPrincipal: user.localPrincipal ? {
+          id: user.localPrincipal._id?.toString(),
+          nombre: user.localPrincipal.nombre,
+          direccion: user.localPrincipal.direccion
         } : null,
         imagenPerfil: user.imagenPerfil,
         verificado: user.verificado,
@@ -171,7 +184,8 @@ export const getUserById = async (req, res) => {
     
     const user = await User.findById(userId)
       .select('-password')
-      .populate('local', 'nombre direccion telefono email')
+      .populate('locales', 'nombre direccion telefono email')
+      .populate('localPrincipal', 'nombre direccion')
       .populate('creadoPor', 'nombre email')
       .populate('ultimaModificacion.usuario', 'nombre email');
     
@@ -192,8 +206,14 @@ export const getUserById = async (req, res) => {
         });
       }
       
-      // Solo puede ver usuarios de su local
-      if (req.user.local && (!user.local || req.user.local.toString() !== user.local._id.toString())) {
+      // Solo puede ver usuarios que pertenezcan a alguno de sus locales
+      const tienePermisos = user.locales && user.locales.some(local => 
+        req.user.locales && req.user.locales.some(adminLocal => 
+          adminLocal.toString() === local.toString()
+        )
+      );
+      
+      if (!tienePermisos) {
         return res.status(403).json({
           success: false,
           message: 'No tiene permisos para ver este usuario'
@@ -218,10 +238,7 @@ export const getUserById = async (req, res) => {
 // Crear un nuevo usuario (admin o superAdmin pueden hacer esto)
 export const createUser = async (req, res) => {
   try {
-    const { nombre, email, password, role, telefono, direccion, organizacion, local } = req.body;
-    
-    // Tratar local como null si es cadena vacía
-    const localId = local === '' ? null : local;
+    const { nombre, email, password, role, telefono, direccion, organizacion, locales } = req.body;
     
     // Verificar límite de superAdmins si se está creando uno nuevo
     if (role === 'superAdmin') {
@@ -234,7 +251,7 @@ export const createUser = async (req, res) => {
       }
     }
     
-    // Si el usuario es admin, solo puede crear usuarios regulares en su local
+    // Si el usuario es admin, solo puede crear usuarios regulares en sus locales
     if (req.userRole === 'admin') {
       // No puede crear administradores
       if (role && role !== 'usuario') {
@@ -244,27 +261,36 @@ export const createUser = async (req, res) => {
         });
       }
       
-      // Si se especifica un local, verificar que sea el del admin
-      if (localId && localId !== req.user.local.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: 'Solo puede asignar usuarios a su propio local/marca'
-        });
-      }
-      
-      // Asignar local del admin solo si se especifica en la petición
-      if (localId === req.user.local.toString()) {
-        req.body.local = req.user.local;
+      // Si se especifican locales, verificar que pertenezcan al admin
+      if (locales && Array.isArray(locales) && locales.length > 0) {
+        // Verificar que todos los locales especificados pertenezcan al admin
+        const tienePermiso = locales.every(localId => 
+          req.user.locales && req.user.locales.some(adminLocal => 
+            adminLocal.toString() === localId
+          )
+        );
+        
+        if (!tienePermiso) {
+          return res.status(403).json({
+            success: false,
+            message: 'Solo puede asignar usuarios a sus propios locales/marcas'
+          });
+        }
+      } else {
+        // Si no se especifican locales, asignar los locales del admin
+        req.body.locales = req.user.locales;
       }
     } else if (req.userRole === 'superAdmin') {
-      // Verificar que el local exista si se especifica
-      if (localId) {
-        const localExiste = await Local.findById(localId);
-        if (!localExiste) {
-          return res.status(404).json({
-            success: false,
-            message: 'El local/marca especificado no existe'
-          });
+      // Verificar que los locales existan
+      if (locales && Array.isArray(locales) && locales.length > 0) {
+        for (const localId of locales) {
+          const localExiste = await Local.findById(localId);
+          if (!localExiste) {
+            return res.status(404).json({
+              success: false,
+              message: `El local/marca con ID ${localId} no existe`
+            });
+          }
         }
       }
     }
@@ -297,16 +323,18 @@ export const createUser = async (req, res) => {
       }
     };
     
-    // Asignar local solo si está presente y no es cadena vacía
-    if (req.body.local && req.body.local !== '' || localId) {
-      userData.local = req.body.local !== '' ? req.body.local : localId;
+    // Asignar locales si están presentes
+    if (locales && Array.isArray(locales) && locales.length > 0) {
+      userData.locales = locales;
+      // Si hay locales, establecer el primero como localPrincipal
+      userData.localPrincipal = locales[0];
     }
     
     // Crear el usuario
     const newUser = await User.create(userData);
     
-    // Si se creó un admin con local asignado, marcarlo como administrador del local
-    if (newUser.role === 'admin' && newUser.local) {
+    // Si se creó un admin con locales asignados, marcarlo como administrador del local
+    if (newUser.role === 'admin' && newUser.locales && newUser.locales.length > 0) {
       newUser.esAdministradorLocal = true;
       await newUser.save();
     }
@@ -317,7 +345,8 @@ export const createUser = async (req, res) => {
       nombre: newUser.nombre,
       email: newUser.email,
       role: newUser.role,
-      local: newUser.local,
+      locales: newUser.locales,
+      localPrincipal: newUser.localPrincipal,
       telefono: newUser.telefono,
       direccion: newUser.direccion,
       organizacion: newUser.organizacion,
@@ -556,7 +585,7 @@ export const resetUserPassword = async (req, res) => {
     const { newPassword } = req.body;
     
     // Buscar el usuario
-    const user = await User.findById(userId).populate('local', 'nombre');
+    const user = await User.findById(userId).populate('locales', 'nombre');
     
     if (!user) {
       return res.status(404).json({
@@ -565,7 +594,7 @@ export const resetUserPassword = async (req, res) => {
       });
     }
     
-    // Verificar permisos: admin solo puede restablecer contraseñas de usuarios de su local
+    // Verificar permisos: admin solo puede restablecer contraseñas de usuarios de sus locales
     if (req.userRole === 'admin') {
       if (user.role === 'superAdmin' || user.role === 'admin') {
         return res.status(403).json({
@@ -574,7 +603,14 @@ export const resetUserPassword = async (req, res) => {
         });
       }
       
-      if (!user.local || req.user.local.toString() !== user.local._id.toString()) {
+      // Verificar si el usuario pertenece a alguno de los locales del admin
+      const tienePermisos = user.locales && user.locales.some(local => 
+        req.user.locales && req.user.locales.some(adminLocal => 
+          adminLocal.toString() === local._id.toString()
+        )
+      );
+      
+      if (!tienePermisos) {
         return res.status(403).json({
           success: false,
           message: 'No tiene permisos para cambiar la contraseña de usuarios de otro local/marca'
@@ -614,7 +650,8 @@ export const toggleUserStatus = async (req, res) => {
     const { activo } = req.body;
     
     // Modificar la consulta para incluir usuarios inactivos
-    const user = await User.findOne({ _id: userId, includeInactive: true }).populate('local', 'nombre');
+    const user = await User.findOne({ _id: userId, includeInactive: true })
+      .populate('locales', 'nombre direccion');
     
     if (!user) {
       logger.warn(`Usuario no encontrado: ${userId}`);
@@ -624,7 +661,7 @@ export const toggleUserStatus = async (req, res) => {
       });
     }
     
-    // Verificar permisos: admin solo puede cambiar estado de usuarios de su local
+    // Verificar permisos: admin solo puede cambiar estado de usuarios de sus locales
     if (req.userRole === 'admin') {
       if (user.role === 'superAdmin' || user.role === 'admin') {
         return res.status(403).json({
@@ -633,7 +670,14 @@ export const toggleUserStatus = async (req, res) => {
         });
       }
       
-      if (!user.local || req.user.local.toString() !== user.local._id.toString()) {
+      // Verificar si el usuario pertenece a alguno de los locales del admin
+      const tienePermisos = user.locales && user.locales.some(local => 
+        req.user.locales && req.user.locales.some(adminLocal => 
+          adminLocal.toString() === local._id.toString()
+        )
+      );
+      
+      if (!tienePermisos) {
         return res.status(403).json({
           success: false,
           message: 'No tiene permisos para cambiar el estado de usuarios de otro local/marca'
@@ -653,18 +697,21 @@ export const toggleUserStatus = async (req, res) => {
     }
     
     // Prevenir desactivación del último admin de un local
-    if (user.role === 'admin' && user.local && !activo) {
-      const adminsCount = await User.countDocuments({ 
-        role: 'admin', 
-        local: user.local._id, 
-        activo: true 
-      });
-      
-      if (adminsCount <= 1) {
-        return res.status(400).json({
-          success: false,
-          message: 'No se puede desactivar el único administrador de este local/marca'
+    if (user.role === 'admin' && user.locales && user.locales.length > 0 && !activo) {
+      // Verificar cada local del admin
+      for (const local of user.locales) {
+        const adminsCount = await User.countDocuments({ 
+          role: 'admin', 
+          locales: local._id, 
+          activo: true 
         });
+        
+        if (adminsCount <= 1) {
+          return res.status(400).json({
+            success: false,
+            message: `No se puede desactivar el único administrador del local/marca ${local.nombre}`
+          });
+        }
       }
     }
     
