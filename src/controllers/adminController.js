@@ -325,8 +325,13 @@ export const createUser = async (req, res) => {
     
     // Asignar locales si están presentes
     if (locales && Array.isArray(locales) && locales.length > 0) {
-      userData.locales = locales;
-      // Si hay locales, establecer el primero como primaryLocal
+      // Solo los administradores pueden tener múltiples locales
+      if (role !== 'admin') {
+        userData.locales = [locales[0]]; // Para usuarios regulares y superAdmin, solo el primer local
+      } else {
+        userData.locales = locales;
+      }
+      // Establecer el primer local como primaryLocal
       userData.primaryLocal = locales[0];
     }
     
@@ -477,7 +482,22 @@ export const updateUser = async (req, res) => {
     
     // Si se están actualizando los locales, actualizar también el primaryLocal
     if (updateData.locales && Array.isArray(updateData.locales) && updateData.locales.length > 0) {
+      // Si se está cambiando el rol a no-admin, solo permitir un local
+      if (updateData.role && updateData.role !== 'admin') {
+        updateData.locales = [updateData.locales[0]];
+      }
       updateData.primaryLocal = updateData.locales[0];
+    }
+    
+    // Si se está cambiando el rol a no-admin y el usuario tiene múltiples locales,
+    // reducir a solo el local principal
+    if (updateData.role && updateData.role !== 'admin' && user.locales && user.locales.length > 1) {
+      if (user.primaryLocal) {
+        updateData.locales = [user.primaryLocal];
+      } else if (user.locales.length > 0) {
+        updateData.locales = [user.locales[0]];
+        updateData.primaryLocal = user.locales[0];
+      }
     }
     
     // Actualizar el usuario

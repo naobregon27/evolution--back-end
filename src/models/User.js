@@ -308,14 +308,23 @@ userSchema.methods.perteneceALocal = function(localId) {
 };
 
 userSchema.methods.agregarLocal = async function(localId) {
+  // Verificar si ya tiene este local asignado
   if (this.locales && this.locales.some(local => local.toString() === localId.toString())) {
     return false;
   }
   
-  if (!this.locales) this.locales = [];
-  this.locales.push(localId);
+  // Solo los administradores pueden tener múltiples locales
+  if (this.role === 'admin') {
+    // Para administradores, agregar a la lista de locales
+    if (!this.locales) this.locales = [];
+    this.locales.push(localId);
+  } else {
+    // Para usuarios regulares y superAdmin, reemplazar el local
+    this.locales = [localId];
+  }
   
-  if (!this.primaryLocal) {
+  // Establecer como local principal si no hay uno definido o si no es admin
+  if (!this.primaryLocal || this.role !== 'admin') {
     this.primaryLocal = localId;
   }
   
