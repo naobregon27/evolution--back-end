@@ -1,6 +1,7 @@
 import User from '../models/User.js';
 import Local from '../models/Local.js';
 import logger from '../config/logger.js';
+import mongoose from 'mongoose';
 
 // Cantidad máxima de superAdmins permitidos
 const MAX_SUPER_ADMINS = 4;
@@ -360,7 +361,7 @@ export const updateUser = async (req, res) => {
     }
     
     // Buscar el usuario a actualizar
-    const user = await User.findById(userId).populate('local', 'nombre');
+    const user = await User.findById(userId).populate('locales', 'nombre');
     
     if (!user) {
       return res.status(404).json({
@@ -369,36 +370,43 @@ export const updateUser = async (req, res) => {
       });
     }
     
-    // Si es admin, solo puede actualizar usuarios de su local
+    // Si es admin, solo puede actualizar usuarios de sus locales
     if (req.userRole === 'admin') {
-      // No puede cambiar usuarios de otro local
-      if (!user.local || req.user.local.toString() !== user.local._id.toString()) {
+      // Verificar si el usuario pertenece a alguno de los locales que administra
+      const puedeAdministrar = req.user.puedeAdministrar(user);
+      
+      if (!puedeAdministrar) {
         return res.status(403).json({
           success: false,
-          message: 'No puede editar usuarios de otro local/marca'
+          message: 'No puede editar usuarios de otros locales/marcas'
         });
       }
       
       // No puede cambiar el rol ni el local
       delete updateData.role;
-      delete updateData.local;
+      delete updateData.locales;
+      delete updateData.primaryLocal;
     } else if (req.userRole === 'superAdmin') {
       // Si es superAdmin y cambia a un usuario a admin, verificar que tenga local asignado
-      if (updateData.role === 'admin' && !updateData.local && !user.local) {
+      if (updateData.role === 'admin' && 
+          (!updateData.locales || !updateData.locales.length) && 
+          !user.locales.length) {
         return res.status(400).json({
           success: false,
-          message: 'Debe asignar un local al administrador'
+          message: 'Debe asignar al menos un local al administrador'
         });
       }
       
-      // Verificar que el local exista si se está cambiando
-      if (updateData.local && updateData.local !== user.local?._id.toString()) {
-        const localExiste = await Local.findById(updateData.local);
-        if (!localExiste) {
-          return res.status(404).json({
-            success: false,
-            message: 'El local/marca especificado no existe'
-          });
+      // Si se están cambiando los locales, verificar que existan
+      if (updateData.locales && Array.isArray(updateData.locales)) {
+        for (const localId of updateData.locales) {
+          const localExiste = await Local.findById(localId);
+          if (!localExiste) {
+            return res.status(404).json({
+              success: false,
+              message: `El local/marca con ID ${localId} no existe`
+            });
+          }
         }
       }
     }
@@ -432,9 +440,15 @@ export const updateUser = async (req, res) => {
       fecha: Date.now()
     };
     
-    // Si cambia a admin y tiene local, marcar como administrador del local
-    if (updateData.role === 'admin' && (updateData.local || user.local)) {
+    // Si cambia a admin y tiene locales, marcar como administrador del local
+    if (updateData.role === 'admin' && 
+        ((updateData.locales && updateData.locales.length > 0) || user.locales.length > 0)) {
       updateData.esAdministradorLocal = true;
+    }
+    
+    // Si se están actualizando los locales, actualizar también el primaryLocal
+    if (updateData.locales && Array.isArray(updateData.locales) && updateData.locales.length > 0) {
+      updateData.primaryLocal = updateData.locales[0];
     }
     
     // Actualizar el usuario
@@ -443,7 +457,8 @@ export const updateUser = async (req, res) => {
       { $set: updateData },
       { new: true, runValidators: true }
     ).select('-password')
-     .populate('local', 'nombre direccion');
+     .populate('locales', 'nombre direccion')
+     .populate('primaryLocal', 'nombre direccion');
     
     res.status(200).json({
       success: true,
@@ -731,5 +746,333 @@ export const initSuperAdmin = async (req, res) => {
       message: 'Error al inicializar superAdmin',
       error: error.message 
     });
+  }
+};
+
+// Obtener estadísticas generales de todos los administradores
+export const getAdminStats = async (req, res) => {
+  try {
+    // Obtener todos los administradores con sus locales
+    const admins = await User.find({ role: 'admin', activo: true })
+      .populate('locales', 'nombre direccion')
+      .populate('primaryLocal', 'nombre direccion')
+      .select('-password');
+    
+    // Preparar respuesta con estadísticas
+    const adminStats = await Promise.all(admins.map(async (admin) => {
+      // Contar usuarios por cada local del administrador
+      const localesStats = await Promise.all(admin.locales.map(async (local) => {
+        const usuariosCount = await User.countDocuments({ 
+          role: 'usuario', 
+          locales: local._id
+        });
+        
+        return {
+          id: local._id,
+          nombre: local.nombre,
+          direccion: local.direccion,
+          usuariosCount
+        };
+      }));
+      
+      // Total de usuarios administrados
+      const totalUsuarios = localesStats.reduce((sum, local) => sum + local.usuariosCount, 0);
+      
+      return {
+        id: admin._id,
+        nombre: admin.nombre,
+        email: admin.email,
+        totalLocales: admin.locales.length,
+        totalUsuarios,
+        primaryLocal: admin.primaryLocal ? {
+          id: admin.primaryLocal._id,
+          nombre: admin.primaryLocal.nombre
+        } : null,
+        ultimoAcceso: admin.ultimoAcceso
+      };
+    }));
+    
+    res.status(200).json({
+      success: true,
+      message: 'Estadísticas de administradores obtenidas exitosamente',
+      data: {
+        totalAdmins: adminStats.length,
+        admins: adminStats
+      }
+    });
+  } catch (error) {
+    logger.error(`Error obteniendo estadísticas de administradores: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener estadísticas de administradores',
+      error: error.message
+    });
+  }
+};
+
+// Obtener estadísticas detalladas de un administrador específico
+export const getAdminDetailStats = async (req, res) => {
+  try {
+    const { adminId } = req.params;
+    
+    // Verificar permisos
+    if (req.userRole === 'admin' && req.userId !== adminId) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tiene permisos para ver estadísticas de otro administrador'
+      });
+    }
+    
+    // Obtener el administrador con sus locales
+    const admin = await User.findOne({ 
+      _id: adminId, 
+      role: 'admin' 
+    })
+    .populate('locales', 'nombre direccion activo')
+    .populate('primaryLocal', 'nombre direccion')
+    .populate('creadoPor', 'nombre email')
+    .populate('ultimaModificacion.usuario', 'nombre email')
+    .select('-password');
+    
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        message: 'Administrador no encontrado'
+      });
+    }
+    
+    // Obtener estadísticas detalladas por cada local
+    const localesStats = await Promise.all(admin.locales.map(async (local) => {
+      // Contar usuarios por rol en este local
+      const usuariosCount = await User.countDocuments({ 
+        role: 'usuario', 
+        locales: local._id 
+      });
+      
+      // Obtener últimos usuarios registrados en este local
+      const ultimosUsuarios = await User.find({ 
+        role: 'usuario', 
+        locales: local._id 
+      })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select('nombre email createdAt ultimoAcceso');
+      
+      // Usuarios activos en últimos 30 días
+      const treintaDiasAtras = new Date();
+      treintaDiasAtras.setDate(treintaDiasAtras.getDate() - 30);
+      
+      const usuariosActivos = await User.countDocuments({
+        role: 'usuario',
+        locales: local._id,
+        ultimoAcceso: { $gte: treintaDiasAtras }
+      });
+      
+      return {
+        id: local._id,
+        nombre: local.nombre,
+        direccion: local.direccion,
+        activo: local.activo,
+        estadisticas: {
+          totalUsuarios: usuariosCount,
+          usuariosActivos,
+          porcentajeActivos: usuariosCount > 0 ? Math.round((usuariosActivos / usuariosCount) * 100) : 0
+        },
+        ultimosUsuarios
+      };
+    }));
+    
+    // Total de usuarios administrados
+    const totalUsuarios = localesStats.reduce((sum, local) => sum + local.estadisticas.totalUsuarios, 0);
+    
+    // Crear objeto de respuesta
+    const adminStats = {
+      id: admin._id,
+      nombre: admin.nombre,
+      email: admin.email,
+      telefono: admin.telefono,
+      activo: admin.activo,
+      enLinea: admin.enLinea,
+      ultimoAcceso: admin.ultimoAcceso,
+      createdAt: admin.createdAt,
+      creadoPor: admin.creadoPor,
+      ultimaModificacion: admin.ultimaModificacion,
+      estadisticas: {
+        totalLocales: admin.locales.length,
+        totalUsuarios,
+        primaryLocal: admin.primaryLocal ? {
+          id: admin.primaryLocal._id,
+          nombre: admin.primaryLocal.nombre
+        } : null
+      },
+      locales: localesStats
+    };
+    
+    res.status(200).json({
+      success: true,
+      message: 'Estadísticas detalladas del administrador obtenidas exitosamente',
+      data: adminStats
+    });
+  } catch (error) {
+    logger.error(`Error obteniendo estadísticas detalladas: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener estadísticas detalladas del administrador',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Asigna un local adicional a un administrador
+ * @param {Object} req - Objeto de solicitud
+ * @param {Object} res - Objeto de respuesta
+ */
+export const assignLocalToAdmin = async (req, res) => {
+  try {
+    const { adminId } = req.params;
+    const { localId } = req.body;
+
+    if (!localId) {
+      return res.status(400).json({ success: false, message: 'ID del local es requerido' });
+    }
+
+    // Verificar que el administrador existe
+    const admin = await User.findOne({ _id: adminId, role: 'admin' });
+    if (!admin) {
+      return res.status(404).json({ success: false, message: 'Administrador no encontrado' });
+    }
+
+    // Verificar que el local existe
+    const local = await Local.findById(localId);
+    if (!local) {
+      return res.status(404).json({ success: false, message: 'Local no encontrado' });
+    }
+
+    // Verificar si ya tiene asignado este local
+    if (admin.locales.includes(localId)) {
+      return res.status(400).json({ success: false, message: 'El local ya está asignado a este administrador' });
+    }
+
+    // Agregar el local a la lista de locales del administrador
+    admin.locales.push(localId);
+    
+    // Si es el primer local, establecerlo como principal
+    if (admin.locales.length === 1) {
+      admin.primaryLocal = localId;
+    }
+
+    await admin.save();
+
+    logger.info(`Local ${localId} asignado correctamente al administrador ${adminId}`);
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Local asignado correctamente', 
+      data: {
+        adminId: admin._id,
+        locales: admin.locales,
+        primaryLocal: admin.primaryLocal
+      }
+    });
+  } catch (error) {
+    logger.error(`Error al asignar local al administrador: ${error.message}`, { stack: error.stack });
+    return res.status(500).json({ success: false, message: 'Error al asignar local al administrador', error: error.message });
+  }
+};
+
+/**
+ * Elimina un local asignado a un administrador
+ * @param {Object} req - Objeto de solicitud
+ * @param {Object} res - Objeto de respuesta
+ */
+export const removeLocalFromAdmin = async (req, res) => {
+  try {
+    const { adminId, localId } = req.params;
+
+    // Verificar que el administrador existe
+    const admin = await User.findOne({ _id: adminId, role: 'admin' });
+    if (!admin) {
+      return res.status(404).json({ success: false, message: 'Administrador no encontrado' });
+    }
+
+    // Verificar si el local está asignado
+    if (!admin.locales.includes(localId)) {
+      return res.status(400).json({ success: false, message: 'El local no está asignado a este administrador' });
+    }
+
+    // No permitir eliminar el único local asignado
+    if (admin.locales.length === 1) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No se puede eliminar el único local asignado. El administrador debe tener al menos un local asignado'
+      });
+    }
+
+    // Eliminar el local de la lista
+    admin.locales = admin.locales.filter(id => id.toString() !== localId);
+    
+    // Si el local eliminado era el principal, asignar otro como principal
+    if (admin.primaryLocal && admin.primaryLocal.toString() === localId) {
+      admin.primaryLocal = admin.locales[0];
+    }
+
+    await admin.save();
+
+    logger.info(`Local ${localId} eliminado correctamente del administrador ${adminId}`);
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Local eliminado correctamente', 
+      data: {
+        adminId: admin._id,
+        locales: admin.locales,
+        primaryLocal: admin.primaryLocal
+      }
+    });
+  } catch (error) {
+    logger.error(`Error al eliminar local del administrador: ${error.message}`, { stack: error.stack });
+    return res.status(500).json({ success: false, message: 'Error al eliminar local del administrador', error: error.message });
+  }
+};
+
+/**
+ * Establece un local como principal para un administrador
+ * @param {Object} req - Objeto de solicitud
+ * @param {Object} res - Objeto de respuesta
+ */
+export const setAdminPrimaryLocal = async (req, res) => {
+  try {
+    const { adminId, localId } = req.params;
+
+    // Verificar que el administrador existe
+    const admin = await User.findOne({ _id: adminId, role: 'admin' });
+    if (!admin) {
+      return res.status(404).json({ success: false, message: 'Administrador no encontrado' });
+    }
+
+    // Verificar si el local está asignado
+    if (!admin.locales.includes(localId)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No se puede establecer como principal un local que no está asignado al administrador'
+      });
+    }
+
+    // Establecer local como principal
+    admin.primaryLocal = localId;
+    await admin.save();
+
+    logger.info(`Local ${localId} establecido como principal para el administrador ${adminId}`);
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Local principal establecido correctamente', 
+      data: {
+        adminId: admin._id,
+        locales: admin.locales,
+        primaryLocal: admin.primaryLocal
+      }
+    });
+  } catch (error) {
+    logger.error(`Error al establecer local principal: ${error.message}`, { stack: error.stack });
+    return res.status(500).json({ success: false, message: 'Error al establecer local principal', error: error.message });
   }
 }; 

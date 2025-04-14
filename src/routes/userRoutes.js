@@ -7,7 +7,7 @@ import {
   changePassword, 
   forgotPassword 
 } from '../controllers/userController.js';
-import { verifyToken } from '../middlewares/authMiddleware.js';
+import { verifyToken, isUser, hasRole } from '../middlewares/authMiddleware.js';
 import { 
   validateRegister, 
   validateLogin,
@@ -41,16 +41,16 @@ router.post('/logout', verifyToken, logout);
 /**
  * @route GET /api/users/profile
  * @desc Obtener perfil de usuario
- * @access Privado
+ * @access Privado (solo usuarios con rol 'usuario')
  */
-router.get('/profile', verifyToken, getProfile);
+router.get('/profile', verifyToken, isUser, getProfile);
 
 /**
  * @route PUT /api/users/change-password
  * @desc Cambiar contraseña de usuario
- * @access Privado
+ * @access Privado (solo usuarios con rol 'usuario')
  */
-router.put('/change-password', verifyToken, validateChangePassword, changePassword);
+router.put('/change-password', verifyToken, isUser, validateChangePassword, changePassword);
 
 /**
  * @route POST /api/users/forgot-password

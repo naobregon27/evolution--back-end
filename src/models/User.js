@@ -33,7 +33,11 @@ const userSchema = new mongoose.Schema({
     enum: ['usuario', 'admin', 'superAdmin'],
     default: 'usuario'
   },
-  local: {
+  locales: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Local'
+  }],
+  primaryLocal: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Local',
     required: false
@@ -99,7 +103,6 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
-  // Nuevo campo para el estado de sesión
   enLinea: {
     type: Boolean,
     default: false
@@ -154,26 +157,22 @@ const userSchema = new mongoose.Schema({
   versionKey: false 
 });
 
-// Índices para mejorar el rendimiento
-// userSchema.index({ email: 1 }); // Eliminamos este índice porque ya está definido en el campo como unique
 userSchema.index({ role: 1 });
 userSchema.index({ activo: 1 });
-userSchema.index({ local: 1 });
+userSchema.index({ 'locales': 1 });
+userSchema.index({ primaryLocal: 1 });
 userSchema.index({ enLinea: 1 });
+userSchema.index({ role: 1, 'locales': 1 });
 
-// Middleware para hashear la contraseña antes de guardar
 userSchema.pre('save', async function(next) {
-  // Solo hash si la contraseña fue modificada o es nueva
   if (!this.isModified('password')) return next();
   
   try {
-    // Aumentar a 12 rondas de salt para mayor seguridad (por defecto es 10)
     const salt = await bcrypt.genSalt(12);
     this.password = await bcrypt.hash(this.password, salt);
     
-    // Si estamos cambiando la contraseña (no es un nuevo usuario)
     if (this.isModified('password') && !this.isNew) {
-      this.passwordChangedAt = Date.now() - 1000; // -1 segundo para asegurar que se crea el token después
+      this.passwordChangedAt = Date.now() - 1000;
     }
     
     next();
@@ -182,27 +181,29 @@ userSchema.pre('save', async function(next) {
   }
 });
 
-// Query middleware para no incluir usuarios inactivos por defecto
+userSchema.pre('save', function(next) {
+  if (this.locales && this.locales.length > 0 && !this.primaryLocal) {
+    this.primaryLocal = this.locales[0];
+  }
+  next();
+});
+
 userSchema.pre(/^find/, function(next) {
-  // Solo aplicar si no se ha especificado explícitamente incluir inactivos
   if (this.getQuery().includeInactive !== true) {
     this.find({ activo: { $ne: false } });
   }
   next();
 });
 
-// Método para comparar contraseñas
 userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Incrementar versión del token al cambiar contraseña (para invalidar tokens existentes)
 userSchema.methods.incrementTokenVersion = function() {
   this.tokenVersion += 1;
   return this.tokenVersion;
 };
 
-// Verificar si el usuario cambió su contraseña después de emitir un token
 userSchema.methods.changedPasswordAfter = function(JWTTimestamp) {
   if (this.passwordChangedAt) {
     const changedTimestamp = parseInt(this.passwordChangedAt.getTime() / 1000, 10);
@@ -211,28 +212,22 @@ userSchema.methods.changedPasswordAfter = function(JWTTimestamp) {
   return false;
 };
 
-// Método para crear token de restablecimiento de contraseña
 userSchema.methods.createPasswordResetToken = function() {
-  // Generar token aleatorio con crypto
   const resetToken = require('crypto').randomBytes(32).toString('hex');
   
-  // Guardar versión encriptada en la base de datos
   this.passwordResetToken = require('crypto')
     .createHash('sha256')
     .update(resetToken)
     .digest('hex');
   
-  // Token expira en 10 minutos
   this.passwordResetExpires = Date.now() + 10 * 60 * 1000;
   
   return resetToken;
 };
 
-// Método para registrar intento fallido de login
 userSchema.methods.registrarIntentoFallido = async function() {
   this.intentosFallidos += 1;
   
-  // Si hay 5 o más intentos fallidos, bloquear la cuenta por 30 minutos
   if (this.intentosFallidos >= 5) {
     this.bloqueadoHasta = Date.now() + 30 * 60 * 1000;
   }
@@ -240,21 +235,18 @@ userSchema.methods.registrarIntentoFallido = async function() {
   await this.save({ validateBeforeSave: false });
 };
 
-// Método para registrar login exitoso y establecer enLinea a true
 userSchema.methods.registrarLoginExitoso = async function(infoDispositivo = {}) {
   this.intentosFallidos = 0;
   this.bloqueadoHasta = undefined;
   this.ultimoLogin = Date.now();
   this.enLinea = true;
   
-  // Registrar información del dispositivo si está disponible
   if (Object.keys(infoDispositivo).length > 0) {
     this.dispositivos.push({
       ...infoDispositivo,
       fechaAcceso: Date.now()
     });
     
-    // Mantener solo los últimos 5 dispositivos
     if (this.dispositivos.length > 5) {
       this.dispositivos = this.dispositivos.slice(-5);
     }
@@ -263,7 +255,6 @@ userSchema.methods.registrarLoginExitoso = async function(infoDispositivo = {}) 
   await this.save({ validateBeforeSave: false });
 };
 
-// Método para registrar logout y establecer enLinea a false
 userSchema.methods.registrarLogout = async function() {
   this.enLinea = false;
   this.ultimaConexion = Date.now();
@@ -271,22 +262,17 @@ userSchema.methods.registrarLogout = async function() {
   await this.save({ validateBeforeSave: false });
 };
 
-// Método para verificar si la cuenta está bloqueada
 userSchema.methods.estaBloqueada = function() {
   return this.bloqueadoHasta && this.bloqueadoHasta > Date.now();
 };
 
-// Método para verificar si el usuario tiene un permiso específico
 userSchema.methods.tienePermiso = function(permiso) {
   return !!this.permisos[permiso];
 };
 
-// Método para crear código de verificación
 userSchema.methods.generarCodigoVerificacion = async function() {
-  // Generar un código aleatorio de 6 dígitos
   const codigo = Math.floor(100000 + Math.random() * 900000).toString();
   
-  // Guardar código con fecha de expiración (24 horas)
   this.codigoVerificacion = codigo;
   this.codigoVerificacionExpira = Date.now() + 24 * 60 * 60 * 1000;
   
@@ -295,33 +281,65 @@ userSchema.methods.generarCodigoVerificacion = async function() {
   return codigo;
 };
 
-// Método que comprueba si un usuario puede administrar a otro
 userSchema.methods.puedeAdministrar = function(otroUsuario) {
-  // Un superAdmin puede administrar a cualquiera
   if (this.role === 'superAdmin') return true;
   
-  // Un admin puede administrar a usuarios regulares de su mismo local, pero no a otros admin ni superadmin
-  if (this.role === 'admin' && 
-      otroUsuario.role === 'usuario' && 
-      this.local && 
-      otroUsuario.local && 
-      this.local.toString() === otroUsuario.local.toString()) {
-    return true;
+  if (this.role === 'admin' && otroUsuario.role === 'usuario') {
+    if (this.locales && this.locales.length > 0 && otroUsuario.primaryLocal) {
+      return this.locales.some(local => 
+        local.toString() === otroUsuario.primaryLocal.toString()
+      );
+    }
   }
   
-  // Nadie más puede administrar a otros
   return false;
 };
 
-// Método para determinar si el usuario pertenece a un local específico
 userSchema.methods.perteneceALocal = function(localId) {
-  return this.local && this.local.toString() === localId.toString();
+  if (this.primaryLocal && this.primaryLocal.toString() === localId.toString()) {
+    return true;
+  }
+  
+  if (this.locales && this.locales.length > 0) {
+    return this.locales.some(local => local.toString() === localId.toString());
+  }
+  
+  return false;
 };
 
-// Método estático para crear un superAdmin inicial si no existe ninguno
+userSchema.methods.agregarLocal = async function(localId) {
+  if (this.locales && this.locales.some(local => local.toString() === localId.toString())) {
+    return false;
+  }
+  
+  if (!this.locales) this.locales = [];
+  this.locales.push(localId);
+  
+  if (!this.primaryLocal) {
+    this.primaryLocal = localId;
+  }
+  
+  await this.save({ validateBeforeSave: false });
+  return true;
+};
+
+userSchema.methods.removerLocal = async function(localId) {
+  if (!this.locales || this.locales.length === 0) {
+    return false;
+  }
+  
+  this.locales = this.locales.filter(local => local.toString() !== localId.toString());
+  
+  if (this.primaryLocal && this.primaryLocal.toString() === localId.toString()) {
+    this.primaryLocal = this.locales.length > 0 ? this.locales[0] : null;
+  }
+  
+  await this.save({ validateBeforeSave: false });
+  return true;
+};
+
 userSchema.statics.crearSuperAdminInicial = async function(datosAdmin) {
   try {
-    // Crear el superAdmin inicial
     await this.create({
       ...datosAdmin,
       role: 'superAdmin',
@@ -338,9 +356,8 @@ userSchema.statics.crearSuperAdminInicial = async function(datosAdmin) {
   }
 };
 
-// Método para actualizar el estado enLinea de usuarios inactivos
 userSchema.statics.actualizarEstadoInactividad = async function(tiempoInactividad = 30) {
-  const tiempoLimite = new Date(Date.now() - tiempoInactividad * 60 * 1000); // en minutos
+  const tiempoLimite = new Date(Date.now() - tiempoInactividad * 60 * 1000);
   
   try {
     const resultado = await this.updateMany(

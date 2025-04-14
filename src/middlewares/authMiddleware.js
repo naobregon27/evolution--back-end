@@ -105,7 +105,7 @@ export const verifyToken = async (req, res, next) => {
 
 // Middleware para verificar si el usuario es admin o superAdmin
 export const isAdmin = (req, res, next) => {
-  if (req.userRole !== 'admin' && req.userRole !== 'superAdmin') {
+  if (req.userRole !== 'admin') {
     return res.status(403).json({ 
       success: false, 
       message: 'Acceso denegado - requiere rol de administrador' 
@@ -123,6 +123,30 @@ export const isSuperAdmin = (req, res, next) => {
     });
   }
   next();
+};
+
+// Middleware para verificar si el usuario tiene rol de usuario
+export const isUser = (req, res, next) => {
+  if (req.userRole !== 'usuario') {
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Acceso denegado - requiere rol de usuario' 
+    });
+  }
+  next();
+};
+
+// Middleware para verificar si el usuario tiene cualquiera de los roles especificados
+export const hasRole = (roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.userRole)) {
+      return res.status(403).json({ 
+        success: false, 
+        message: `Acceso denegado - requiere uno de estos roles: ${roles.join(', ')}` 
+      });
+    }
+    next();
+  };
 };
 
 // Middleware para verificar permisos específicos
