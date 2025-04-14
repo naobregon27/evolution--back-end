@@ -37,7 +37,7 @@ const userSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Local'
   }],
-  localPrincipal: {
+  primaryLocal: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Local',
     required: false
@@ -160,7 +160,7 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ role: 1 });
 userSchema.index({ activo: 1 });
 userSchema.index({ 'locales': 1 });
-userSchema.index({ localPrincipal: 1 });
+userSchema.index({ primaryLocal: 1 });
 userSchema.index({ enLinea: 1 });
 userSchema.index({ role: 1, 'locales': 1 });
 
@@ -182,8 +182,8 @@ userSchema.pre('save', async function(next) {
 });
 
 userSchema.pre('save', function(next) {
-  if (this.locales && this.locales.length > 0 && !this.localPrincipal) {
-    this.localPrincipal = this.locales[0];
+  if (this.locales && this.locales.length > 0 && !this.primaryLocal) {
+    this.primaryLocal = this.locales[0];
   }
   next();
 });
@@ -285,9 +285,9 @@ userSchema.methods.puedeAdministrar = function(otroUsuario) {
   if (this.role === 'superAdmin') return true;
   
   if (this.role === 'admin' && otroUsuario.role === 'usuario') {
-    if (this.locales && this.locales.length > 0 && otroUsuario.localPrincipal) {
+    if (this.locales && this.locales.length > 0 && otroUsuario.primaryLocal) {
       return this.locales.some(local => 
-        local.toString() === otroUsuario.localPrincipal.toString()
+        local.toString() === otroUsuario.primaryLocal.toString()
       );
     }
   }
@@ -296,7 +296,7 @@ userSchema.methods.puedeAdministrar = function(otroUsuario) {
 };
 
 userSchema.methods.perteneceALocal = function(localId) {
-  if (this.localPrincipal && this.localPrincipal.toString() === localId.toString()) {
+  if (this.primaryLocal && this.primaryLocal.toString() === localId.toString()) {
     return true;
   }
   
@@ -315,8 +315,8 @@ userSchema.methods.agregarLocal = async function(localId) {
   if (!this.locales) this.locales = [];
   this.locales.push(localId);
   
-  if (!this.localPrincipal) {
-    this.localPrincipal = localId;
+  if (!this.primaryLocal) {
+    this.primaryLocal = localId;
   }
   
   await this.save({ validateBeforeSave: false });
@@ -330,8 +330,8 @@ userSchema.methods.removerLocal = async function(localId) {
   
   this.locales = this.locales.filter(local => local.toString() !== localId.toString());
   
-  if (this.localPrincipal && this.localPrincipal.toString() === localId.toString()) {
-    this.localPrincipal = this.locales.length > 0 ? this.locales[0] : null;
+  if (this.primaryLocal && this.primaryLocal.toString() === localId.toString()) {
+    this.primaryLocal = this.locales.length > 0 ? this.locales[0] : null;
   }
   
   await this.save({ validateBeforeSave: false });

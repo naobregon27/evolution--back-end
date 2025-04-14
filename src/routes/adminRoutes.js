@@ -12,7 +12,9 @@ import {
   getAdminDetailStats,
   assignLocalToAdmin,
   removeLocalFromAdmin,
-  setAdminPrimaryLocal
+  setAdminPrimaryLocal,
+  createDemoLocalAndAssign,
+  createDemoUsersForAdmins
 } from '../controllers/adminController.js';
 import { verifyToken, isAdmin, isSuperAdmin, puedeCrearUsuarioConRol, verifyStrictToken, hasRole } from '../middlewares/authMiddleware.js';
 import {
@@ -135,5 +137,19 @@ router.delete('/admins/:adminId/locales/:localId', verifyToken, isSuperAdmin, re
  * @access SuperAdmin
  */
 router.put('/admins/:adminId/locales/primary/:localId', verifyToken, isSuperAdmin, setAdminPrimaryLocal);
+
+/**
+ * @route POST /api/admin/setup-demo-local
+ * @desc Crear un local de demostración y asignarlo a todos los administradores sin locales
+ * @access SuperAdmin
+ */
+router.post('/setup-demo-local', verifyToken, isSuperAdmin, createDemoLocalAndAssign);
+
+/**
+ * @route POST /api/admin/setup-demo-users
+ * @desc Crear usuarios de demostración para los locales de los administradores
+ * @access SuperAdmin
+ */
+router.post('/setup-demo-users', verifyToken, isSuperAdmin, createDemoUsersForAdmins);
 
 export default router; 

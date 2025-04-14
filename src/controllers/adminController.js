@@ -51,7 +51,7 @@ export const getAllUsers = async (req, res) => {
     const users = await User.find(findQuery, null, options)
       .select('-password')
       .populate('locales', 'nombre direccion telefono email')
-      .populate('localPrincipal', 'nombre direccion')
+      .populate('primaryLocal', 'nombre direccion')
       .populate('creadoPor', 'nombre email')
       .populate('ultimaModificacion.usuario', 'nombre email')
       .skip(skip)
@@ -124,10 +124,10 @@ export const getAllUsers = async (req, res) => {
           telefono: local.telefono,
           email: local.email
         })) : [],
-        localPrincipal: user.localPrincipal ? {
-          id: user.localPrincipal._id?.toString(),
-          nombre: user.localPrincipal.nombre,
-          direccion: user.localPrincipal.direccion
+        primaryLocal: user.primaryLocal ? {
+          id: user.primaryLocal._id?.toString(),
+          nombre: user.primaryLocal.nombre,
+          direccion: user.primaryLocal.direccion
         } : null,
         imagenPerfil: user.imagenPerfil,
         verificado: user.verificado,
@@ -185,7 +185,7 @@ export const getUserById = async (req, res) => {
     const user = await User.findById(userId)
       .select('-password')
       .populate('locales', 'nombre direccion telefono email')
-      .populate('localPrincipal', 'nombre direccion')
+      .populate('primaryLocal', 'nombre direccion')
       .populate('creadoPor', 'nombre email')
       .populate('ultimaModificacion.usuario', 'nombre email');
     
@@ -326,8 +326,8 @@ export const createUser = async (req, res) => {
     // Asignar locales si están presentes
     if (locales && Array.isArray(locales) && locales.length > 0) {
       userData.locales = locales;
-      // Si hay locales, establecer el primero como localPrincipal
-      userData.localPrincipal = locales[0];
+      // Si hay locales, establecer el primero como primaryLocal
+      userData.primaryLocal = locales[0];
     }
     
     // Crear el usuario
@@ -346,7 +346,7 @@ export const createUser = async (req, res) => {
       email: newUser.email,
       role: newUser.role,
       locales: newUser.locales,
-      localPrincipal: newUser.localPrincipal,
+      primaryLocal: newUser.primaryLocal,
       telefono: newUser.telefono,
       direccion: newUser.direccion,
       organizacion: newUser.organizacion,
@@ -414,7 +414,7 @@ export const updateUser = async (req, res) => {
       // No puede cambiar el rol ni el local
       delete updateData.role;
       delete updateData.locales;
-      delete updateData.localPrincipal;
+      delete updateData.primaryLocal;
     } else if (req.userRole === 'superAdmin') {
       // Si es superAdmin y cambia a un usuario a admin, verificar que tenga local asignado
       if (updateData.role === 'admin' && 
@@ -475,9 +475,9 @@ export const updateUser = async (req, res) => {
       updateData.esAdministradorLocal = true;
     }
     
-    // Si se están actualizando los locales, actualizar también el localPrincipal
+    // Si se están actualizando los locales, actualizar también el primaryLocal
     if (updateData.locales && Array.isArray(updateData.locales) && updateData.locales.length > 0) {
-      updateData.localPrincipal = updateData.locales[0];
+      updateData.primaryLocal = updateData.locales[0];
     }
     
     // Actualizar el usuario
@@ -487,7 +487,7 @@ export const updateUser = async (req, res) => {
       { new: true, runValidators: true }
     ).select('-password')
      .populate('locales', 'nombre direccion')
-     .populate('localPrincipal', 'nombre direccion');
+     .populate('primaryLocal', 'nombre direccion');
     
     res.status(200).json({
       success: true,
@@ -801,41 +801,71 @@ export const getAdminStats = async (req, res) => {
   try {
     // Obtener todos los administradores con sus locales
     const admins = await User.find({ role: 'admin', activo: true })
-      .populate('locales', 'nombre direccion')
-      .populate('localPrincipal', 'nombre direccion')
+      .populate('locales', 'nombre direccion telefono email')
+      .populate('primaryLocal', 'nombre direccion')
       .select('-password');
     
     // Preparar respuesta con estadísticas
     const adminStats = await Promise.all(admins.map(async (admin) => {
-      // Contar usuarios por cada local del administrador
-      const localesStats = await Promise.all(admin.locales.map(async (local) => {
-        const usuariosCount = await User.countDocuments({ 
-          role: 'usuario', 
-          locales: local._id
-        });
-        
-        return {
-          id: local._id,
-          nombre: local.nombre,
-          direccion: local.direccion,
-          usuariosCount
-        };
-      }));
+      // Información detallada de locales con conteo de usuarios
+      const localesInfo = [];
+      let totalUsuarios = 0;
       
-      // Total de usuarios administrados
-      const totalUsuarios = localesStats.reduce((sum, local) => sum + local.usuariosCount, 0);
+      if (admin.locales && admin.locales.length > 0) {
+        // Procesar cada local
+        for (const local of admin.locales) {
+          // Contar usuarios en este local
+          const usuariosEnLocal = await User.countDocuments({ 
+            role: 'usuario',
+            locales: local._id 
+          });
+          
+          totalUsuarios += usuariosEnLocal;
+          
+          localesInfo.push({
+            id: local._id,
+            nombre: local.nombre,
+            direccion: local.direccion,
+            telefono: local.telefono,
+            email: local.email,
+            usuariosRegistrados: usuariosEnLocal
+          });
+        }
+      }
+      
+      // Contar usuarios activos (que se conectaron en los últimos 30 días)
+      const treintaDiasAtras = new Date();
+      treintaDiasAtras.setDate(treintaDiasAtras.getDate() - 30);
+      
+      const usuariosActivos = admin.locales && admin.locales.length > 0 
+        ? await User.countDocuments({
+            role: 'usuario',
+            locales: { $in: admin.locales.map(local => local._id) },
+            ultimaConexion: { $gte: treintaDiasAtras }
+          })
+        : 0;
       
       return {
         id: admin._id,
         nombre: admin.nombre,
         email: admin.email,
-        totalLocales: admin.locales.length,
-        totalUsuarios,
-        localPrincipal: admin.localPrincipal ? {
-          id: admin.localPrincipal._id,
-          nombre: admin.localPrincipal.nombre
-        } : null,
-        ultimoAcceso: admin.ultimoAcceso
+        telefono: admin.telefono || '',
+        activo: admin.activo || true,
+        enLinea: admin.enLinea || false,
+        ultimaConexion: admin.ultimaConexion,
+        fechaCreacion: admin.createdAt,
+        totalLocales: localesInfo.length,
+        locales: localesInfo,
+        estadisticas: {
+          totalUsuarios,
+          usuariosActivos,
+          porcentajeActivos: totalUsuarios > 0 ? Math.round((usuariosActivos / totalUsuarios) * 100) : 0
+        },
+        primaryLocal: admin.primaryLocal ? {
+          id: admin.primaryLocal._id,
+          nombre: admin.primaryLocal.nombre,
+          direccion: admin.primaryLocal.direccion
+        } : null
       };
     }));
     
@@ -876,7 +906,7 @@ export const getAdminDetailStats = async (req, res) => {
       role: 'admin' 
     })
     .populate('locales', 'nombre direccion activo')
-    .populate('localPrincipal', 'nombre direccion')
+    .populate('primaryLocal', 'nombre direccion')
     .populate('creadoPor', 'nombre email')
     .populate('ultimaModificacion.usuario', 'nombre email')
     .select('-password');
@@ -947,9 +977,9 @@ export const getAdminDetailStats = async (req, res) => {
       estadisticas: {
         totalLocales: admin.locales.length,
         totalUsuarios,
-        localPrincipal: admin.localPrincipal ? {
-          id: admin.localPrincipal._id,
-          nombre: admin.localPrincipal.nombre
+        primaryLocal: admin.primaryLocal ? {
+          id: admin.primaryLocal._id,
+          nombre: admin.primaryLocal.nombre
         } : null
       },
       locales: localesStats
@@ -1006,7 +1036,7 @@ export const assignLocalToAdmin = async (req, res) => {
     
     // Si es el primer local, establecerlo como principal
     if (admin.locales.length === 1) {
-      admin.localPrincipal = localId;
+      admin.primaryLocal = localId;
     }
 
     await admin.save();
@@ -1018,7 +1048,7 @@ export const assignLocalToAdmin = async (req, res) => {
       data: {
         adminId: admin._id,
         locales: admin.locales,
-        localPrincipal: admin.localPrincipal
+        primaryLocal: admin.primaryLocal
       }
     });
   } catch (error) {
@@ -1059,8 +1089,8 @@ export const removeLocalFromAdmin = async (req, res) => {
     admin.locales = admin.locales.filter(id => id.toString() !== localId);
     
     // Si el local eliminado era el principal, asignar otro como principal
-    if (admin.localPrincipal && admin.localPrincipal.toString() === localId) {
-      admin.localPrincipal = admin.locales[0];
+    if (admin.primaryLocal && admin.primaryLocal.toString() === localId) {
+      admin.primaryLocal = admin.locales[0];
     }
 
     await admin.save();
@@ -1072,7 +1102,7 @@ export const removeLocalFromAdmin = async (req, res) => {
       data: {
         adminId: admin._id,
         locales: admin.locales,
-        localPrincipal: admin.localPrincipal
+        primaryLocal: admin.primaryLocal
       }
     });
   } catch (error) {
@@ -1105,7 +1135,7 @@ export const setAdminPrimaryLocal = async (req, res) => {
     }
 
     // Establecer local como principal
-    admin.localPrincipal = localId;
+    admin.primaryLocal = localId;
     await admin.save();
 
     logger.info(`Local ${localId} establecido como principal para el administrador ${adminId}`);
@@ -1115,11 +1145,220 @@ export const setAdminPrimaryLocal = async (req, res) => {
       data: {
         adminId: admin._id,
         locales: admin.locales,
-        localPrincipal: admin.localPrincipal
+        primaryLocal: admin.primaryLocal
       }
     });
   } catch (error) {
     logger.error(`Error al establecer local principal: ${error.message}`, { stack: error.stack });
     return res.status(500).json({ success: false, message: 'Error al establecer local principal', error: error.message });
+  }
+};
+
+/**
+ * Crea un local de demostración y lo asigna a todos los administradores sin locales
+ * @param {Object} req - Objeto de solicitud
+ * @param {Object} res - Objeto de respuesta
+ */
+export const createDemoLocalAndAssign = async (req, res) => {
+  try {
+    // Verificar si el usuario es superAdmin
+    if (req.userRole !== 'superAdmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Solo superAdmin puede realizar esta operación'
+      });
+    }
+
+    // Buscar administradores sin locales
+    const adminsWithoutLocals = await User.find({
+      role: 'admin',
+      $or: [
+        { locales: { $exists: false } },
+        { locales: { $size: 0 } }
+      ]
+    });
+
+    if (adminsWithoutLocals.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No hay administradores sin locales asignados',
+        data: { adminsProcessed: 0 }
+      });
+    }
+
+    // Buscar si ya existe el local demo
+    let demoLocal = await Local.findOne({ nombre: 'Local Demostración' });
+
+    // Si no existe el local demo, crearlo
+    if (!demoLocal) {
+      demoLocal = await Local.create({
+        nombre: 'Local Demostración',
+        direccion: 'Dirección de demostración #123',
+        telefono: '1234567890',
+        email: 'demo@local.com',
+        creadoPor: req.userId,
+        ultimaModificacion: {
+          usuario: req.userId,
+          fecha: Date.now()
+        }
+      });
+      logger.info(`Local de demostración creado con ID: ${demoLocal._id}`);
+    }
+
+    // Asignar el local demo a cada administrador sin locales
+    const processedAdmins = [];
+    
+    for (const admin of adminsWithoutLocals) {
+      await admin.agregarLocal(demoLocal._id);
+      processedAdmins.push({
+        id: admin._id,
+        nombre: admin.nombre,
+        email: admin.email
+      });
+      logger.info(`Local de demostración asignado al administrador: ${admin.email}`);
+    }
+
+    // Actualizar estadísticas del local
+    await demoLocal.actualizarEstadisticas();
+
+    return res.status(200).json({
+      success: true,
+      message: `Local de demostración asignado a ${processedAdmins.length} administradores`,
+      data: {
+        local: {
+          id: demoLocal._id,
+          nombre: demoLocal.nombre,
+          direccion: demoLocal.direccion
+        },
+        adminsProcessed: processedAdmins.length,
+        admins: processedAdmins
+      }
+    });
+  } catch (error) {
+    logger.error(`Error asignando local demo a administradores: ${error.message}`, { stack: error.stack });
+    return res.status(500).json({
+      success: false,
+      message: 'Error al asignar local demo a administradores',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Crea usuarios de demostración y los asigna a los locales de los administradores
+ * @param {Object} req - Objeto de solicitud
+ * @param {Object} res - Objeto de respuesta
+ */
+export const createDemoUsersForAdmins = async (req, res) => {
+  try {
+    // Verificar si el usuario es superAdmin
+    if (req.userRole !== 'superAdmin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Solo superAdmin puede realizar esta operación'
+      });
+    }
+
+    // Encontrar todos los administradores con locales asignados
+    const adminsWithLocals = await User.find({
+      role: 'admin',
+      locales: { $exists: true, $ne: [] }
+    }).populate('locales', 'nombre');
+
+    if (adminsWithLocals.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No hay administradores con locales asignados',
+        data: { adminsProcessed: 0 }
+      });
+    }
+
+    // Para cada administrador, crear usuarios de demostración
+    const results = [];
+    
+    for (const admin of adminsWithLocals) {
+      const adminResult = {
+        adminId: admin._id,
+        adminEmail: admin.email,
+        locales: [],
+        usersCreated: 0
+      };
+      
+      // Procesar cada local del administrador
+      for (const local of admin.locales) {
+        const localResult = {
+          localId: local._id,
+          localNombre: local.nombre,
+          usersCreated: []
+        };
+        
+        // Crear 3 usuarios de demostración para este local
+        for (let i = 1; i <= 3; i++) {
+          const userName = `Usuario Demo ${i} (${local.nombre})`;
+          const userEmail = `usuario_demo_${i}_${local._id.toString().substring(0, 5)}@demoapp.com`;
+          
+          // Verificar si el usuario ya existe
+          const userExists = await User.findOne({ email: userEmail });
+          
+          if (!userExists) {
+            // Crear nuevo usuario
+            const newUser = await User.create({
+              nombre: userName,
+              email: userEmail,
+              password: 'Demo@1234', // Contraseña segura para demo
+              role: 'usuario',
+              telefono: `123456789${i}`,
+              locales: [local._id],
+              primaryLocal: local._id,
+              verificado: true,
+              activo: true,
+              creadoPor: req.userId,
+              ultimaModificacion: {
+                usuario: req.userId,
+                fecha: Date.now()
+              }
+            });
+            
+            localResult.usersCreated.push({
+              id: newUser._id,
+              nombre: newUser.nombre,
+              email: newUser.email
+            });
+            
+            adminResult.usersCreated++;
+          }
+        }
+        
+        adminResult.locales.push(localResult);
+      }
+      
+      results.push(adminResult);
+    }
+    
+    // Actualizar estadísticas de los locales
+    for (const admin of adminsWithLocals) {
+      for (const localId of admin.locales) {
+        const local = await Local.findById(localId);
+        if (local) {
+          await local.actualizarEstadisticas();
+        }
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Usuarios de demostración creados y asignados exitosamente',
+      data: {
+        adminsProcessed: results.length,
+        results
+      }
+    });
+  } catch (error) {
+    logger.error(`Error creando usuarios de demostración: ${error.message}`, { stack: error.stack });
+    return res.status(500).json({
+      success: false,
+      message: 'Error al crear usuarios de demostración',
+      error: error.message
+    });
   }
 }; 
