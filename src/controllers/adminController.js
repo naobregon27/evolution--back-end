@@ -385,7 +385,7 @@ export const updateUser = async (req, res) => {
       // No puede cambiar el rol ni el local
       delete updateData.role;
       delete updateData.locales;
-      delete updateData.primaryLocal;
+      delete updateData.localPrincipal;
     } else if (req.userRole === 'superAdmin') {
       // Si es superAdmin y cambia a un usuario a admin, verificar que tenga local asignado
       if (updateData.role === 'admin' && 
@@ -446,9 +446,9 @@ export const updateUser = async (req, res) => {
       updateData.esAdministradorLocal = true;
     }
     
-    // Si se están actualizando los locales, actualizar también el primaryLocal
+    // Si se están actualizando los locales, actualizar también el localPrincipal
     if (updateData.locales && Array.isArray(updateData.locales) && updateData.locales.length > 0) {
-      updateData.primaryLocal = updateData.locales[0];
+      updateData.localPrincipal = updateData.locales[0];
     }
     
     // Actualizar el usuario
@@ -458,7 +458,7 @@ export const updateUser = async (req, res) => {
       { new: true, runValidators: true }
     ).select('-password')
      .populate('locales', 'nombre direccion')
-     .populate('primaryLocal', 'nombre direccion');
+     .populate('localPrincipal', 'nombre direccion');
     
     res.status(200).json({
       success: true,
@@ -755,7 +755,7 @@ export const getAdminStats = async (req, res) => {
     // Obtener todos los administradores con sus locales
     const admins = await User.find({ role: 'admin', activo: true })
       .populate('locales', 'nombre direccion')
-      .populate('primaryLocal', 'nombre direccion')
+      .populate('localPrincipal', 'nombre direccion')
       .select('-password');
     
     // Preparar respuesta con estadísticas
@@ -784,9 +784,9 @@ export const getAdminStats = async (req, res) => {
         email: admin.email,
         totalLocales: admin.locales.length,
         totalUsuarios,
-        primaryLocal: admin.primaryLocal ? {
-          id: admin.primaryLocal._id,
-          nombre: admin.primaryLocal.nombre
+        localPrincipal: admin.localPrincipal ? {
+          id: admin.localPrincipal._id,
+          nombre: admin.localPrincipal.nombre
         } : null,
         ultimoAcceso: admin.ultimoAcceso
       };
@@ -829,7 +829,7 @@ export const getAdminDetailStats = async (req, res) => {
       role: 'admin' 
     })
     .populate('locales', 'nombre direccion activo')
-    .populate('primaryLocal', 'nombre direccion')
+    .populate('localPrincipal', 'nombre direccion')
     .populate('creadoPor', 'nombre email')
     .populate('ultimaModificacion.usuario', 'nombre email')
     .select('-password');
@@ -900,9 +900,9 @@ export const getAdminDetailStats = async (req, res) => {
       estadisticas: {
         totalLocales: admin.locales.length,
         totalUsuarios,
-        primaryLocal: admin.primaryLocal ? {
-          id: admin.primaryLocal._id,
-          nombre: admin.primaryLocal.nombre
+        localPrincipal: admin.localPrincipal ? {
+          id: admin.localPrincipal._id,
+          nombre: admin.localPrincipal.nombre
         } : null
       },
       locales: localesStats
@@ -959,7 +959,7 @@ export const assignLocalToAdmin = async (req, res) => {
     
     // Si es el primer local, establecerlo como principal
     if (admin.locales.length === 1) {
-      admin.primaryLocal = localId;
+      admin.localPrincipal = localId;
     }
 
     await admin.save();
@@ -971,7 +971,7 @@ export const assignLocalToAdmin = async (req, res) => {
       data: {
         adminId: admin._id,
         locales: admin.locales,
-        primaryLocal: admin.primaryLocal
+        localPrincipal: admin.localPrincipal
       }
     });
   } catch (error) {
@@ -1012,8 +1012,8 @@ export const removeLocalFromAdmin = async (req, res) => {
     admin.locales = admin.locales.filter(id => id.toString() !== localId);
     
     // Si el local eliminado era el principal, asignar otro como principal
-    if (admin.primaryLocal && admin.primaryLocal.toString() === localId) {
-      admin.primaryLocal = admin.locales[0];
+    if (admin.localPrincipal && admin.localPrincipal.toString() === localId) {
+      admin.localPrincipal = admin.locales[0];
     }
 
     await admin.save();
@@ -1025,7 +1025,7 @@ export const removeLocalFromAdmin = async (req, res) => {
       data: {
         adminId: admin._id,
         locales: admin.locales,
-        primaryLocal: admin.primaryLocal
+        localPrincipal: admin.localPrincipal
       }
     });
   } catch (error) {
@@ -1058,7 +1058,7 @@ export const setAdminPrimaryLocal = async (req, res) => {
     }
 
     // Establecer local como principal
-    admin.primaryLocal = localId;
+    admin.localPrincipal = localId;
     await admin.save();
 
     logger.info(`Local ${localId} establecido como principal para el administrador ${adminId}`);
@@ -1068,7 +1068,7 @@ export const setAdminPrimaryLocal = async (req, res) => {
       data: {
         adminId: admin._id,
         locales: admin.locales,
-        primaryLocal: admin.primaryLocal
+        localPrincipal: admin.localPrincipal
       }
     });
   } catch (error) {
