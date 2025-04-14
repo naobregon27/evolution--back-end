@@ -3,12 +3,25 @@ import logger from '../../config/logger.js';
 import { v4 as uuidv4 } from 'uuid';
 
 // Configuración de la API de Infobip
-const INFOBIP_API_URL = `https://${process.env.WHATSAPP_API_URL}`;
-const INFOBIP_API_KEY = process.env.WHATSAPP_API_KEY;
-// Eliminar el signo + del número de teléfono para Infobip
-const WHATSAPP_PHONE_NUMBER = process.env.WHATSAPP_PHONE_NUMBER.startsWith('+') 
-  ? process.env.WHATSAPP_PHONE_NUMBER.substring(1) 
-  : process.env.WHATSAPP_PHONE_NUMBER;
+const INFOBIP_API_URL = `https://${process.env.WHATSAPP_API_URL || 'api.infobip.com'}`;
+const INFOBIP_API_KEY = process.env.WHATSAPP_API_KEY || '';
+// Eliminar el signo + del número de teléfono para Infobip y manejar caso undefined
+const WHATSAPP_PHONE_NUMBER = process.env.WHATSAPP_PHONE_NUMBER 
+  ? (process.env.WHATSAPP_PHONE_NUMBER.startsWith('+') 
+      ? process.env.WHATSAPP_PHONE_NUMBER.substring(1) 
+      : process.env.WHATSAPP_PHONE_NUMBER)
+  : '';
+
+// Advertir si faltan configuraciones importantes
+if (!process.env.WHATSAPP_API_URL) {
+  logger.warn('WHATSAPP_API_URL no está definida en las variables de entorno');
+}
+if (!process.env.WHATSAPP_API_KEY) {
+  logger.warn('WHATSAPP_API_KEY no está definida en las variables de entorno');
+}
+if (!process.env.WHATSAPP_PHONE_NUMBER) {
+  logger.warn('WHATSAPP_PHONE_NUMBER no está definida en las variables de entorno');
+}
 
 // Cliente HTTP para Infobip
 const infobipClient = axios.create({
@@ -49,6 +62,19 @@ infobipClient.interceptors.response.use(
  */
 export const sendTextMessage = async (to, text, options = {}) => {
   try {
+    // Comprobar si tenemos la configuración necesaria
+    if (!INFOBIP_API_KEY || !WHATSAPP_PHONE_NUMBER) {
+      logger.error('Falta configuración de WhatsApp. No se puede enviar mensaje de texto');
+      return {
+        success: false,
+        error: 'WhatsApp no está configurado correctamente',
+        details: { 
+          missingApiKey: !INFOBIP_API_KEY, 
+          missingPhoneNumber: !WHATSAPP_PHONE_NUMBER 
+        }
+      };
+    }
+    
     const messageId = options.messageId || uuidv4();
     
     // Limpiar el número de teléfono (asegurar que no tenga +, espacios o caracteres especiales)
@@ -111,6 +137,19 @@ export const sendTextMessage = async (to, text, options = {}) => {
  */
 export const sendTemplateMessage = async (to, templateName, language, parameters = {}, options = {}) => {
   try {
+    // Comprobar si tenemos la configuración necesaria
+    if (!INFOBIP_API_KEY || !WHATSAPP_PHONE_NUMBER) {
+      logger.error('Falta configuración de WhatsApp. No se puede enviar mensaje con plantilla');
+      return {
+        success: false,
+        error: 'WhatsApp no está configurado correctamente',
+        details: { 
+          missingApiKey: !INFOBIP_API_KEY, 
+          missingPhoneNumber: !WHATSAPP_PHONE_NUMBER 
+        }
+      };
+    }
+    
     const messageId = options.messageId || uuidv4();
     
     // Limpiar el número de teléfono
@@ -209,6 +248,19 @@ export const sendTemplateMessage = async (to, templateName, language, parameters
  */
 export const sendImageMessage = async (to, imageUrl, caption = '', options = {}) => {
   try {
+    // Comprobar si tenemos la configuración necesaria
+    if (!INFOBIP_API_KEY || !WHATSAPP_PHONE_NUMBER) {
+      logger.error('Falta configuración de WhatsApp. No se puede enviar mensaje con imagen');
+      return {
+        success: false,
+        error: 'WhatsApp no está configurado correctamente',
+        details: { 
+          missingApiKey: !INFOBIP_API_KEY, 
+          missingPhoneNumber: !WHATSAPP_PHONE_NUMBER 
+        }
+      };
+    }
+    
     const messageId = options.messageId || uuidv4();
     
     // Limpiar el número de teléfono
@@ -272,6 +324,19 @@ export const sendImageMessage = async (to, imageUrl, caption = '', options = {})
  */
 export const sendDocumentMessage = async (to, documentUrl, fileName, caption = '', options = {}) => {
   try {
+    // Comprobar si tenemos la configuración necesaria
+    if (!INFOBIP_API_KEY || !WHATSAPP_PHONE_NUMBER) {
+      logger.error('Falta configuración de WhatsApp. No se puede enviar mensaje con documento');
+      return {
+        success: false,
+        error: 'WhatsApp no está configurado correctamente',
+        details: { 
+          missingApiKey: !INFOBIP_API_KEY, 
+          missingPhoneNumber: !WHATSAPP_PHONE_NUMBER 
+        }
+      };
+    }
+    
     const messageId = options.messageId || uuidv4();
     
     // Limpiar el número de teléfono
@@ -332,6 +397,16 @@ export const sendDocumentMessage = async (to, documentUrl, fileName, caption = '
  */
 export const getTemplates = async () => {
   try {
+    // Comprobar si tenemos la configuración necesaria
+    if (!INFOBIP_API_KEY) {
+      logger.error('Falta configuración de WhatsApp. No se pueden obtener plantillas');
+      return {
+        success: false,
+        error: 'WhatsApp no está configurado correctamente',
+        details: { missingApiKey: !INFOBIP_API_KEY }
+      };
+    }
+    
     const response = await infobipClient.get('/whatsapp/1/template');
     
     logger.info(`Se obtuvieron ${response.data.templates?.length || 0} plantillas`);
@@ -359,6 +434,16 @@ export const getTemplates = async () => {
  */
 export const checkPhoneNumber = async (phoneNumber) => {
   try {
+    // Comprobar si tenemos la configuración necesaria
+    if (!INFOBIP_API_KEY) {
+      logger.error('Falta configuración de WhatsApp. No se puede verificar el número');
+      return {
+        success: false,
+        error: 'WhatsApp no está configurado correctamente',
+        details: { missingApiKey: !INFOBIP_API_KEY }
+      };
+    }
+    
     // Limpiar el número de teléfono
     const cleanPhone = phoneNumber.replace(/[^\d]/g, '');
     
@@ -392,6 +477,16 @@ export const checkPhoneNumber = async (phoneNumber) => {
  */
 export const addToWhitelist = async (phoneNumber) => {
   try {
+    // Comprobar si tenemos la configuración necesaria
+    if (!INFOBIP_API_KEY) {
+      logger.error('Falta configuración de WhatsApp. No se puede añadir número a whitelist');
+      return {
+        success: false,
+        error: 'WhatsApp no está configurado correctamente',
+        details: { missingApiKey: !INFOBIP_API_KEY }
+      };
+    }
+    
     // Limpiar el número de teléfono
     const cleanPhone = phoneNumber.replace(/[^\d]/g, '');
     
