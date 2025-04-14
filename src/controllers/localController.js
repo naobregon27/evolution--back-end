@@ -306,6 +306,14 @@ export const getLocalUsers = async (req, res) => {
       .limit(limit)
       .sort({ createdAt: -1 });
     
+    // Modificar los usuarios para añadir campo local para compatibilidad
+    const usuariosModificados = usuarios.map(usuario => {
+      const user = usuario.toObject();
+      // Añadir campo local para mantener compatibilidad con el frontend
+      user.local = localId;
+      return user;
+    });
+    
     // Obtener estadísticas de usuarios del local
     const stats = await User.aggregate([
       { $match: { locales: mongoose.Types.ObjectId.createFromHexString(localId) } },
@@ -327,7 +335,7 @@ export const getLocalUsers = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        usuarios,
+        usuarios: usuariosModificados,
         stats: stats.length > 0 ? stats[0] : {
           total: 0,
           activos: 0,
@@ -442,8 +450,7 @@ export const assignLocalAdmin = async (req, res) => {
             nombre: usuario.nombre,
             email: usuario.email,
             role: usuario.role,
-            locales: usuario.locales,
-            primaryLocal: usuario.primaryLocal
+            local: localId // Para compatibilidad con frontend existente
           }
         }
       });
@@ -474,8 +481,7 @@ export const assignLocalAdmin = async (req, res) => {
           nombre: usuario.nombre,
           email: usuario.email,
           role: usuario.role,
-          locales: usuario.locales,
-          primaryLocal: usuario.primaryLocal
+          local: localId // Para compatibilidad con frontend existente
         }
       }
     });
@@ -630,9 +636,17 @@ export const getLocalUserStats = async (req, res) => {
       }
     ]);
     
+    // Renombrar el campo _id a local para compatibilidad
+    const statsModificados = stats.map(stat => {
+      return {
+        ...stat,
+        local: stat._id
+      };
+    });
+    
     res.status(200).json({
       success: true,
-      data: stats
+      data: statsModificados
     });
   } catch (error) {
     logger.error(`Error obteniendo estadísticas: ${error.message}`);
@@ -701,8 +715,7 @@ export const assignUserToLocal = async (req, res) => {
           nombre: usuario.nombre,
           email: usuario.email,
           role: usuario.role,
-          locales: usuario.locales,
-          primaryLocal: usuario.primaryLocal
+          local: localId // Para compatibilidad con frontend existente
         }
       }
     });
