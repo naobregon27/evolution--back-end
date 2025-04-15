@@ -178,7 +178,7 @@ export const validateCreateUser = [
 
 // Validación para actualización de usuario
 export const validateUpdateUser = [
-  param('userId')
+  param('id')
     .isMongoId().withMessage('ID de usuario no válido'),
   
   body('nombre')
@@ -235,7 +235,7 @@ export const validateUpdateUser = [
 
 // Validación para reseteo de contraseña por admin
 export const validateUserPassword = [
-  param('userId')
+  param('id')
     .isMongoId().withMessage('ID de usuario no válido'),
   
   body('newPassword')
@@ -269,7 +269,7 @@ export const validateUserPassword = [
 
 // Validación para activar/desactivar usuario
 export const validateToggleStatus = [
-  param('userId')
+  param('id')
     .isMongoId().withMessage('ID de usuario no válido'),
   
   body('activo')

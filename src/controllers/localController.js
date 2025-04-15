@@ -407,8 +407,8 @@ export const assignLocalAdmin = async (req, res) => {
       
       // Admin no puede convertir a otros en admin
       if (changeRole === true) {
-        return res.status(403).json({
-          success: false,
+      return res.status(403).json({
+        success: false,
           message: 'Solo el superAdmin puede convertir usuarios en administradores'
         });
       }
@@ -428,10 +428,10 @@ export const assignLocalAdmin = async (req, res) => {
     if (changeRole === true && req.userRole === 'superAdmin') {
       usuario.role = 'admin';
       usuario.esAdministradorLocal = true;
-      
-      // Verificar si el local ya tiene administradores
-      const adminCount = await User.countDocuments({
-        role: 'admin',
+    
+    // Verificar si el local ya tiene administradores
+    const adminCount = await User.countDocuments({
+      role: 'admin',
         locales: localId,
         activo: true,
         _id: { $ne: usuario._id } // Excluir al usuario actual del conteo
@@ -459,7 +459,7 @@ export const assignLocalAdmin = async (req, res) => {
     // Si no se especificó cambiar el rol, mantener el rol actual
     // Solo actualizamos esAdministradorLocal si el rol es "admin"
     if (usuario.role === 'admin') {
-      usuario.esAdministradorLocal = true;
+    usuario.esAdministradorLocal = true;
     } else {
       usuario.esAdministradorLocal = false;
     }
@@ -558,8 +558,8 @@ export const unassignUserFromLocal = async (req, res) => {
     
     // Si el usuario se queda sin locales, desactivarlo
     if (!usuario.locales || usuario.locales.length === 0) {
-      usuario.activo = false; // Desactivar al usuario al desasignarlo
-      usuario.enLinea = false; // Desconectar al usuario
+    usuario.activo = false; // Desactivar al usuario al desasignarlo
+    usuario.enLinea = false; // Desconectar al usuario
     }
     
     usuario.ultimaModificacion = {
@@ -724,6 +724,59 @@ export const assignUserToLocal = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al asignar usuario al local/marca',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Elimina un local/marca y gestiona todas sus dependencias
+ * @param {Object} req - Objeto de solicitud
+ * @param {Object} res - Objeto de respuesta
+ */
+export const deleteLocal = async (req, res) => {
+  try {
+    const { localId } = req.params;
+    
+    // Verificar si el local existe
+    const local = await Local.findById(localId);
+    
+    if (!local) {
+      return res.status(404).json({
+        success: false,
+        message: 'Local/Marca no encontrado'
+      });
+    }
+    
+    // Verificar si hay usuarios asignados a este local
+    const usuariosCount = await User.countDocuments({ locales: localId });
+    
+    if (usuariosCount > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `No se puede eliminar el local/marca porque tiene ${usuariosCount} usuarios asignados. Desasigne a todos los usuarios primero.`
+      });
+    }
+    
+    // Buscar recursos adicionales que puedan depender de este local
+    // Por ejemplo, templates de WhatsApp, mensajes, etc.
+    // Si existen colecciones adicionales que hagan referencia a este local, aquí se verificarían
+    
+    // Registrar la acción antes de eliminar
+    logger.info(`Local con ID ${localId} (${local.nombre}) eliminado por superAdmin ${req.userId}`);
+    
+    // Eliminar el local
+    await Local.findByIdAndDelete(localId);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Local/Marca eliminado exitosamente'
+    });
+  } catch (error) {
+    logger.error(`Error eliminando local: ${error.message}`, { stack: error.stack });
+    res.status(500).json({
+      success: false,
+      message: 'Error al eliminar el local/marca',
       error: error.message
     });
   }

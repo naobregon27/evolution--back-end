@@ -97,11 +97,13 @@ router.delete('/users/:id', verifyToken, hasRole(['admin', 'superAdmin']), delet
 router.put('/users/:id/password', verifyToken, isAdmin, validateUserPassword, resetUserPassword);
 
 /**
- * @route PATCH /api/admin/users/:id/toggle-status
- * @desc Activar/Desactivar un usuario
+ * @route PUT /api/admin/users/:id/toggle-status
+ * @desc Activar/Desactivar un usuario:
+ *       - SuperAdmin puede activar/desactivar cualquier usuario (admin o usuario)
+ *       - Admin solo puede activar/desactivar usuarios regulares de sus locales
  * @access Admin, SuperAdmin
  */
-router.patch('/users/:id/toggle-status', verifyToken, hasRole(['admin', 'superAdmin']), validateToggleStatus, toggleUserStatus);
+router.put('/users/:id/toggle-status', verifyToken, hasRole(['admin', 'superAdmin']), validateToggleStatus, toggleUserStatus);
 
 /**
  * @route GET /api/admin/admins/stats

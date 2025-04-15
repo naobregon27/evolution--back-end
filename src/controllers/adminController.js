@@ -84,12 +84,12 @@ export const getAllUsers = async (req, res) => {
       if (req.userRole === 'admin' && req.user.locales && req.user.locales.length > 0) {
         for (const adminLocal of req.user.locales) {
           const adminLocalId = adminLocal.toString();
-          if (!localUserCounts[adminLocalId]) {
-            localUserCounts[adminLocalId] = await User.countDocuments({
+        if (!localUserCounts[adminLocalId]) {
+          localUserCounts[adminLocalId] = await User.countDocuments({
               locales: adminLocalId,
-              role: 'usuario',
-              activo: true
-            });
+            role: 'usuario',
+            activo: true
+          });
           }
         }
       }
@@ -180,7 +180,7 @@ export const getAllUsers = async (req, res) => {
 // Obtener un usuario por ID
 export const getUserById = async (req, res) => {
   try {
-    const { userId } = req.params;
+    const userId = req.params.id;
     
     const user = await User.findById(userId)
       .select('-password')
@@ -272,7 +272,7 @@ export const createUser = async (req, res) => {
         
         if (!tienePermiso) {
           return res.status(403).json({
-            success: false,
+          success: false,
             message: 'Solo puede asignar usuarios a sus propios locales/marcas'
           });
         }
@@ -285,11 +285,11 @@ export const createUser = async (req, res) => {
       if (locales && Array.isArray(locales) && locales.length > 0) {
         for (const localId of locales) {
           const localExiste = await Local.findById(localId);
-          if (!localExiste) {
-            return res.status(404).json({
-              success: false,
+        if (!localExiste) {
+          return res.status(404).json({
+            success: false,
               message: `El local/marca con ID ${localId} no existe`
-            });
+          });
           }
         }
       }
@@ -377,7 +377,7 @@ export const createUser = async (req, res) => {
 // Actualizar un usuario
 export const updateUser = async (req, res) => {
   try {
-    const { userId } = req.params;
+    const userId = req.params.id;
     const updateData = req.body;
     
     // Verificar límite de superAdmins si se está cambiando el rol a superAdmin
@@ -524,72 +524,139 @@ export const updateUser = async (req, res) => {
   }
 };
 
-// Eliminar un usuario (solo superAdmin)
+// Eliminar un usuario (superAdmin y admin)
 export const deleteUser = async (req, res) => {
   try {
-    const { userId } = req.params;
+    // Usamos 'id' en lugar de 'userId' para corresponder con la definición de la ruta
+    const userId = req.params.id;
     
-    // Solo permitir a superAdmin eliminar usuarios
-    if (req.userRole !== 'superAdmin') {
-      return res.status(403).json({
+    logger.info(`Intento de eliminar usuario ID: ${userId}`);
+
+    // Verificar que userId no sea undefined o null
+    if (!userId) {
+      logger.error('ID de usuario no proporcionado en la petición');
+      return res.status(400).json({
         success: false,
-        message: 'Solo superAdmin puede eliminar usuarios'
+        message: 'ID de usuario no proporcionado'
       });
     }
     
-    // Buscar el usuario
-    const user = await User.findById(userId);
+    // Validar formato del ID
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      logger.warn(`Intento de eliminar usuario con ID inválido: ${userId}`);
+      return res.status(400).json({
+        success: false,
+        message: 'ID de usuario inválido'
+      });
+    }
+    
+    // Buscar el usuario a eliminar, asegurándonos de incluir usuarios inactivos
+    const user = await User.findById(userId).select('-password');
     
     if (!user) {
+      logger.warn(`Usuario con ID ${userId} no encontrado en la base de datos`);
       return res.status(404).json({
         success: false,
         message: 'Usuario no encontrado'
       });
     }
     
-    // Prevenir eliminación de superAdmin si quedaría menos de uno activo
-    if (user.role === 'superAdmin') {
-      const superAdminsCount = await User.countDocuments({ role: 'superAdmin', activo: true });
-      if (superAdminsCount <= 1) {
-        return res.status(400).json({
+    logger.info(`Usuario encontrado: ${user.email} (${user.role})`);
+    
+    // Verificaciones para superAdmin
+    if (req.userRole === 'superAdmin') {
+      // Prevenir eliminación de superAdmin si quedaría menos de uno activo
+      if (user.role === 'superAdmin') {
+        const superAdminsCount = await User.countDocuments({ role: 'superAdmin', activo: true });
+        if (superAdminsCount <= 1) {
+          return res.status(400).json({
+            success: false,
+            message: 'No se puede eliminar el último superAdmin activo del sistema'
+          });
+        }
+      }
+      
+      // Prevenir eliminación del último admin de un local
+      if (user.role === 'admin' && user.locales && user.locales.length > 0) {
+        for (const localId of user.locales) {
+          const adminsCount = await User.countDocuments({ 
+            role: 'admin', 
+            locales: localId, 
+            activo: true,
+            _id: { $ne: userId } // Excluir al usuario actual
+          });
+          
+          if (adminsCount === 0) {
+            return res.status(400).json({
+              success: false,
+              message: 'No se puede eliminar el único administrador de un local/marca'
+            });
+          }
+        }
+      }
+    } 
+    // Verificaciones para admin
+    else if (req.userRole === 'admin') {
+      // Admin no puede eliminar a otros admins ni superadmins
+      if (user.role === 'admin' || user.role === 'superAdmin') {
+        return res.status(403).json({
           success: false,
-          message: 'No se puede eliminar el último superAdmin activo del sistema'
+          message: 'No tiene permisos para eliminar administradores o superadministradores'
         });
       }
+      
+      // Verificar que el usuario pertenezca a alguno de los locales del admin
+      const puedeEliminar = user.locales && user.locales.length > 0 && req.user && req.user.locales && 
+        user.locales.some(localId => 
+          req.user.locales.some(adminLocal => 
+            adminLocal.toString() === localId.toString()
+          )
+        );
+      
+      if (!puedeEliminar) {
+        return res.status(403).json({
+          success: false,
+          message: 'No tiene permisos para eliminar usuarios de otros locales/marcas'
+        });
+      }
+    } 
+    // Si no es superAdmin ni admin, no tiene permisos
+    else {
+      return res.status(403).json({
+        success: false,
+        message: 'No tiene permisos para eliminar usuarios'
+      });
     }
     
-    // Prevenir eliminación del último admin de un local
-    if (user.role === 'admin' && user.local) {
-      const adminsCount = await User.countDocuments({ 
-        role: 'admin', 
-        local: user.local, 
-        activo: true 
-      });
-      
-      if (adminsCount <= 1) {
-        return res.status(400).json({
-          success: false,
-          message: 'No se puede eliminar el único administrador de este local/marca'
-        });
-      }
-    }
+    logger.info(`Procediendo a desactivar el usuario ${userId}`);
     
     // En lugar de eliminar, marcar como inactivo para mantener historial
-    await User.findByIdAndUpdate(userId, { 
+    const updateResult = await User.findByIdAndUpdate(userId, { 
       activo: false,
       enLinea: false, // Si se desactiva, también está desconectado
       ultimaModificacion: {
         usuario: req.userId,
         fecha: Date.now()
       }
-    });
+    }, { new: true });
+    
+    if (!updateResult) {
+      logger.error(`Error al actualizar usuario ${userId}: No se pudo completar la actualización`);
+      return res.status(500).json({
+        success: false,
+        message: 'Error al desactivar el usuario'
+      });
+    }
+    
+    // Registrar en el log quién eliminó al usuario
+    logger.info(`Usuario ${userId} (${user.email}) desactivado exitosamente por ${req.userId} con rol ${req.userRole}`);
     
     res.status(200).json({
       success: true,
       message: 'Usuario eliminado exitosamente'
     });
   } catch (error) {
-    logger.error(`Error eliminando usuario: ${error.message}`);
+    logger.error(`Error eliminando usuario: ${error.message}`, { stack: error.stack });
     res.status(500).json({ 
       success: false, 
       message: 'Error al eliminar usuario',
@@ -601,7 +668,7 @@ export const deleteUser = async (req, res) => {
 // Restablecer contraseña de un usuario (admin o superAdmin)
 export const resetUserPassword = async (req, res) => {
   try {
-    const { userId } = req.params;
+    const userId = req.params.id;
     const { newPassword } = req.body;
     
     // Buscar el usuario
@@ -666,31 +733,50 @@ export const resetUserPassword = async (req, res) => {
 // Activar/Desactivar un usuario
 export const toggleUserStatus = async (req, res) => {
   try {
-    const { userId } = req.params;
+    // Usar id en lugar de userId para corresponder con la definición de la ruta
+    const userId = req.params.id;
     const { activo } = req.body;
     
-    // Modificar la consulta para incluir usuarios inactivos
-    const user = await User.findOne({ _id: userId, includeInactive: true })
+    logger.info(`Intento de cambiar estado de usuario ID: ${userId} a ${activo ? 'activo' : 'inactivo'} por usuario ${req.userId} (${req.userRole})`);
+    
+    // Verificar que el ID sea válido
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      logger.warn(`ID de usuario inválido: ${userId}`);
+      return res.status(400).json({
+        success: false,
+        message: 'ID de usuario inválido'
+      });
+    }
+    
+    // Asegurarnos de buscar usuarios independientemente de su estado actual (activo o inactivo)
+    const user = await User.findOne({ _id: userId })
       .populate('locales', 'nombre direccion');
     
+    // Registrar más detalles sobre la búsqueda
+    logger.info(`Búsqueda de usuario: ID=${userId}, Encontrado=${!!user}, Consulta=findOne({ _id: ${userId} })`);
+    
     if (!user) {
-      logger.warn(`Usuario no encontrado: ${userId}`);
+      logger.warn(`Usuario con ID ${userId} no encontrado en la base de datos`);
       return res.status(404).json({
         success: false,
         message: 'Usuario no encontrado'
       });
     }
     
-    // Verificar permisos: admin solo puede cambiar estado de usuarios de sus locales
+    logger.info(`Usuario encontrado: ${user.email} (${user.role}), Estado actual: ${user.activo ? 'activo' : 'inactivo'}`);
+    
+    // Verificación de permisos según rol
     if (req.userRole === 'admin') {
+      // Admin NO puede cambiar estado de superAdmins ni otros admins
       if (user.role === 'superAdmin' || user.role === 'admin') {
+        logger.warn(`Admin ${req.userId} intentó cambiar estado de ${userId} (${user.role}). Operación denegada.`);
         return res.status(403).json({
           success: false,
-          message: 'No tiene permisos para cambiar el estado de este usuario'
+          message: 'No tiene permisos para cambiar el estado de administradores o superadministradores'
         });
       }
       
-      // Verificar si el usuario pertenece a alguno de los locales del admin
+      // Admin solo puede cambiar estado de usuarios de sus locales
       const tienePermisos = user.locales && user.locales.some(local => 
         req.user.locales && req.user.locales.some(adminLocal => 
           adminLocal.toString() === local._id.toString()
@@ -698,17 +784,27 @@ export const toggleUserStatus = async (req, res) => {
       );
       
       if (!tienePermisos) {
+        logger.warn(`Admin ${req.userId} intentó cambiar estado de usuario ${userId} de otro local. Operación denegada.`);
         return res.status(403).json({
           success: false,
           message: 'No tiene permisos para cambiar el estado de usuarios de otro local/marca'
         });
       }
     }
+    // Si no es admin ni superAdmin (aunque esto no debería ocurrir por el middleware)
+    else if (req.userRole !== 'superAdmin') {
+      logger.warn(`Usuario con rol ${req.userRole} intentó cambiar estado de usuario ${userId}. Operación denegada.`);
+      return res.status(403).json({
+        success: false,
+        message: 'No tiene permisos para cambiar el estado de usuarios'
+      });
+    }
     
     // Prevenir desactivación del último superAdmin activo
     if (user.role === 'superAdmin' && !activo) {
       const superAdminsCount = await User.countDocuments({ role: 'superAdmin', activo: true });
       if (superAdminsCount <= 1) {
+        logger.warn(`Intento de desactivar el último superAdmin activo. Operación denegada.`);
         return res.status(400).json({
           success: false,
           message: 'No se puede desactivar el último superAdmin activo del sistema'
@@ -723,10 +819,12 @@ export const toggleUserStatus = async (req, res) => {
         const adminsCount = await User.countDocuments({ 
           role: 'admin', 
           locales: local._id, 
-          activo: true 
+          activo: true,
+          _id: { $ne: userId } // Excluir al usuario actual
         });
         
-        if (adminsCount <= 1) {
+        if (adminsCount === 0) {
+          logger.warn(`Intento de desactivar el único admin del local ${local._id}. Operación denegada.`);
           return res.status(400).json({
             success: false,
             message: `No se puede desactivar el único administrador del local/marca ${local.nombre}`
@@ -748,17 +846,19 @@ export const toggleUserStatus = async (req, res) => {
       fecha: Date.now()
     };
     
-    await user.save();
+    // Guardar usuario y verificar que se haya actualizado correctamente
+    const usuarioActualizado = await user.save();
+    logger.info(`Usuario actualizado correctamente: ${usuarioActualizado._id}, Nuevo estado: ${usuarioActualizado.activo ? 'activo' : 'inactivo'}`);
     
     // Agregar logging para depuración
-    logger.info(`Usuario ${userId} ${activo ? 'activado' : 'desactivado'} exitosamente por ${req.userId}`);
+    logger.info(`Usuario ${userId} (${user.email}) ${activo ? 'activado' : 'desactivado'} exitosamente por ${req.userId} con rol ${req.userRole}`);
     
     res.status(200).json({
       success: true,
       message: `Usuario ${activo ? 'activado' : 'desactivado'} exitosamente`
     });
   } catch (error) {
-    logger.error(`Error cambiando estado de usuario: ${error.message}`);
+    logger.error(`Error cambiando estado de usuario: ${error.message}`, { stack: error.stack });
     res.status(500).json({ 
       success: false, 
       message: 'Error al cambiar el estado del usuario',
@@ -1378,7 +1478,7 @@ export const createDemoUsersForAdmins = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Error al crear usuarios de demostración',
-      error: error.message
+      error: error.message 
     });
   }
 }; 

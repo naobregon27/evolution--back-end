@@ -41,16 +41,16 @@ router.post('/logout', verifyToken, logout);
 /**
  * @route GET /api/users/profile
  * @desc Obtener perfil de usuario
- * @access Privado (solo usuarios con rol 'usuario')
+ * @access Privado (todos los roles: superAdmin, admin, usuario)
  */
-router.get('/profile', verifyToken, isUser, getProfile);
+router.get('/profile', verifyToken, getProfile);
 
 /**
  * @route PUT /api/users/change-password
  * @desc Cambiar contraseña de usuario
- * @access Privado (solo usuarios con rol 'usuario')
+ * @access Privado (todos los roles: superAdmin, admin, usuario)
  */
-router.put('/change-password', verifyToken, isUser, validateChangePassword, changePassword);
+router.put('/change-password', verifyToken, validateChangePassword, changePassword);
 
 /**
  * @route POST /api/users/forgot-password

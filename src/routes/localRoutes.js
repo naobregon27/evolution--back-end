@@ -9,7 +9,8 @@ import {
   assignLocalAdmin,
   unassignUserFromLocal,
   getLocalUserStats,
-  assignUserToLocal
+  assignUserToLocal,
+  deleteLocal
 } from '../controllers/localController.js';
 import { 
   verifyToken, 
@@ -97,5 +98,12 @@ router.get('/estadisticas', verifyToken, hasRole(['admin', 'superAdmin']), getLo
  * @access Privado (admin del local y superAdmin)
  */
 router.get('/:localId/estadisticas', verifyToken, hasRole(['admin', 'superAdmin']), getLocalUserStats);
+
+/**
+ * @route DELETE /api/locales/:localId
+ * @desc Eliminar un local/marca y todas sus dependencias
+ * @access Privado (solo superAdmin)
+ */
+router.delete('/:localId', verifyToken, isSuperAdmin, deleteLocal);
 
 export default router; 

@@ -21,7 +21,8 @@ export const register = async (req, res) => {
       nombre,
       email,
       password,
-      local, // Si se proporciona un local, se asigna
+      locales: local ? [local] : [], // Convertir local a locales
+      primaryLocal: local, // Si se proporciona un local, asignarlo como primaryLocal
       enLinea: false, // Por defecto está offline
       activo: true // Por defecto está activo (cuenta habilitada)
     });
@@ -34,7 +35,9 @@ export const register = async (req, res) => {
       nombre: user.nombre,
       email: user.email,
       role: user.role,
-      local: user.local
+      locales: user.locales,
+      primaryLocal: user.primaryLocal,
+      local: user.primaryLocal // Para compatibilidad con el frontend
     };
     
     res.status(201).json({ 
@@ -58,7 +61,11 @@ export const login = async (req, res) => {
     const { email, password } = req.body;
     
     // Buscar usuario por email - usamos select('+password') porque ahora está oculto por defecto
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email })
+      .select('+password')
+      .populate('locales', 'nombre direccion telefono email')
+      .populate('primaryLocal', 'nombre direccion telefono email');
+    
     if (!user) {
       return res.status(401).json({ 
         success: false, 
@@ -128,18 +135,23 @@ export const login = async (req, res) => {
       }
     );
     
+    // Preparar respuesta para mantener compatibilidad con frontend
+    const userData = {
+      id: user._id,
+      nombre: user.nombre,
+      email: user.email,
+      role: user.role,
+      locales: user.locales,
+      primaryLocal: user.primaryLocal,
+      local: user.primaryLocal, // Para compatibilidad con código existente
+      enLinea: user.enLinea
+    };
+    
     res.status(200).json({
       success: true,
       message: 'Login exitoso',
       token,
-      user: {
-        id: user._id,
-        nombre: user.nombre,
-        email: user.email,
-        role: user.role,
-        local: user.local,
-        enLinea: user.enLinea
-      }
+      user: userData
     });
   } catch (error) {
     logger.error(`Error en login: ${error.message}`);
@@ -183,7 +195,9 @@ export const logout = async (req, res) => {
 // Obtener perfil de usuario
 export const getProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.userId).populate('local', 'nombre direccion telefono email');
+    const user = await User.findById(req.userId)
+      .populate('locales', 'nombre direccion telefono email')
+      .populate('primaryLocal', 'nombre direccion telefono email');
     
     if (!user) {
       return res.status(404).json({ 
@@ -198,10 +212,16 @@ export const getProfile = async (req, res) => {
       user.enLinea = true;
       await user.save({ validateBeforeSave: false });
     }
+
+    // Para mantener compatibilidad con el frontend, añadir campo 'local'
+    const userData = user.toObject();
+    if (user.primaryLocal) {
+      userData.local = user.primaryLocal;
+    }
     
     res.status(200).json({
       success: true,
-      data: user
+      data: userData
     });
   } catch (error) {
     logger.error(`Error obteniendo perfil: ${error.message}`);
@@ -222,15 +242,19 @@ export const changePassword = async (req, res) => {
     const user = await User.findById(req.userId).select('+password');
     
     if (!user) {
+      logger.warn(`Intento de cambio de contraseña para usuario no encontrado (ID: ${req.userId})`);
       return res.status(404).json({ 
         success: false, 
         message: 'Usuario no encontrado' 
       });
     }
     
+    logger.info(`Intento de cambio de contraseña por usuario ${user.email} (${user.role})`);
+    
     // Verificar contraseña actual
     const isMatch = await user.comparePassword(currentPassword);
     if (!isMatch) {
+      logger.warn(`Contraseña actual incorrecta para usuario ${user.email} (${user.role})`);
       return res.status(401).json({ 
         success: false, 
         message: 'La contraseña actual es incorrecta' 
@@ -240,14 +264,20 @@ export const changePassword = async (req, res) => {
     // Actualizar contraseña e incrementar versión del token para invalidar sesiones
     user.password = newPassword;
     user.incrementTokenVersion();
+    user.ultimaModificacion = {
+      usuario: req.userId,
+      fecha: Date.now()
+    };
     await user.save();
+    
+    logger.info(`Contraseña actualizada correctamente para usuario ${user.email} (${user.role})`);
     
     res.status(200).json({
       success: true,
       message: 'Contraseña actualizada correctamente'
     });
   } catch (error) {
-    logger.error(`Error cambiando contraseña: ${error.message}`);
+    logger.error(`Error cambiando contraseña: ${error.message}`, { stack: error.stack });
     res.status(500).json({ 
       success: false, 
       message: 'Error al cambiar la contraseña',
