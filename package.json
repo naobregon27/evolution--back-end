@@ -1,14 +1,13 @@
 {
   "name": "evolution-backend",
   "version": "1.0.0",
-  "description": "Backend para la aplicación Evolution",
+  "description": "Backend para aplicación de gestión de clientes, eventos y recordatorios",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "test:whatsapp": "node src/scripts/sendWhatsAppTest.js"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "nodejs",
@@ -23,20 +22,30 @@
     "axios": "^1.8.4",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
+    "dotenv": "^16.5.0",
     "express": "^4.18.2",
     "express-mongo-sanitize": "^2.2.0",
-    "express-rate-limit": "^7.1.5",
+    "express-rate-limit": "^6.11.2",
     "express-validator": "^7.0.1",
-    "helmet": "^7.1.0",
-    "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.0.3",
+    "googleapis": "^118.0.0",
+    "helmet": "^6.2.0",
+    "ical-generator": "^5.0.0",
+    "jsonwebtoken": "^9.0.0",
+    "moment-timezone": "^0.5.43",
+    "mongoose": "^7.0.3",
     "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^3.0.2",
+    "nodemailer": "^6.10.1",
+    "twilio": "^4.11.1",
     "uuid": "^11.1.0",
-    "winston": "^3.11.0",
+    "winston": "^3.8.2",
     "xss-clean": "^0.1.4"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^2.0.22"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   }
 }

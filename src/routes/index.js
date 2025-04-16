@@ -3,6 +3,10 @@ import { Router } from 'express';
 import adminRoutes from './adminRoutes.js';
 import userRoutes from './userRoutes.js';
 import localRoutes from './localRoutes.js';
+import clienteRoutes from './clienteRoutes.js';
+import eventoRoutes from './eventoRoutes.js';
+import recordatorioRoutes from './recordatorioRoutes.js';
+import notaRoutes from './notaRoutes.js';
 import whatsappMessageRoutes from './whatsapp/messageRoutes.js';
 import whatsappTemplateRoutes from './whatsapp/templateRoutes.js';
 import logger from '../config/logger.js';
@@ -20,6 +24,10 @@ router.use((req, res, next) => {
 router.use('/admin', adminRoutes);
 router.use('/users', userRoutes);
 router.use('/locales', localRoutes);
+router.use('/clientes', clienteRoutes);
+router.use('/eventos', eventoRoutes);
+router.use('/recordatorios', recordatorioRoutes);
+router.use('/notas', notaRoutes);
 
 // Rutas de WhatsApp
 router.use('/whatsapp/messages', whatsappMessageRoutes);
@@ -34,7 +42,15 @@ router.get('/', (req, res) => {
     endpoints: {
       users: '/api/users',
       admin: '/api/admin',
-      locales: '/api/locales'
+      locales: '/api/locales',
+      clientes: '/api/clientes',
+      eventos: '/api/eventos',
+      recordatorios: '/api/recordatorios',
+      notas: '/api/notas',
+      whatsapp: {
+        messages: '/api/whatsapp/messages',
+        templates: '/api/whatsapp/templates'
+      }
     }
   });
 });

@@ -435,11 +435,11 @@ export const updateUser = async (req, res) => {
       if (updateData.locales && Array.isArray(updateData.locales)) {
         for (const localId of updateData.locales) {
           const localExiste = await Local.findById(localId);
-          if (!localExiste) {
-            return res.status(404).json({
-              success: false,
+        if (!localExiste) {
+          return res.status(404).json({
+            success: false,
               message: `El local/marca con ID ${localId} no existe`
-            });
+          });
           }
         }
       }
@@ -565,30 +565,30 @@ export const deleteUser = async (req, res) => {
     
     // Verificaciones para superAdmin
     if (req.userRole === 'superAdmin') {
-      // Prevenir eliminación de superAdmin si quedaría menos de uno activo
-      if (user.role === 'superAdmin') {
-        const superAdminsCount = await User.countDocuments({ role: 'superAdmin', activo: true });
-        if (superAdminsCount <= 1) {
-          return res.status(400).json({
-            success: false,
-            message: 'No se puede eliminar el último superAdmin activo del sistema'
-          });
-        }
+    // Prevenir eliminación de superAdmin si quedaría menos de uno activo
+    if (user.role === 'superAdmin') {
+      const superAdminsCount = await User.countDocuments({ role: 'superAdmin', activo: true });
+      if (superAdminsCount <= 1) {
+        return res.status(400).json({
+          success: false,
+          message: 'No se puede eliminar el último superAdmin activo del sistema'
+        });
       }
-      
-      // Prevenir eliminación del último admin de un local
+    }
+    
+    // Prevenir eliminación del último admin de un local
       if (user.role === 'admin' && user.locales && user.locales.length > 0) {
         for (const localId of user.locales) {
-          const adminsCount = await User.countDocuments({ 
-            role: 'admin', 
+      const adminsCount = await User.countDocuments({ 
+        role: 'admin', 
             locales: localId, 
             activo: true,
             _id: { $ne: userId } // Excluir al usuario actual
-          });
-          
+      });
+      
           if (adminsCount === 0) {
-            return res.status(400).json({
-              success: false,
+        return res.status(400).json({
+          success: false,
               message: 'No se puede eliminar el único administrador de un local/marca'
             });
           }
@@ -816,19 +816,19 @@ export const toggleUserStatus = async (req, res) => {
     if (user.role === 'admin' && user.locales && user.locales.length > 0 && !activo) {
       // Verificar cada local del admin
       for (const local of user.locales) {
-        const adminsCount = await User.countDocuments({ 
-          role: 'admin', 
+      const adminsCount = await User.countDocuments({ 
+        role: 'admin', 
           locales: local._id, 
           activo: true,
           _id: { $ne: userId } // Excluir al usuario actual
-        });
-        
+      });
+      
         if (adminsCount === 0) {
           logger.warn(`Intento de desactivar el único admin del local ${local._id}. Operación denegada.`);
-          return res.status(400).json({
-            success: false,
+        return res.status(400).json({
+          success: false,
             message: `No se puede desactivar el único administrador del local/marca ${local.nombre}`
-          });
+        });
         }
       }
     }

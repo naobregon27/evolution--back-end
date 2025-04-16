@@ -13,6 +13,7 @@ import xss from 'xss-clean';
 import User from './models/User.js';
 import Local from './models/Local.js';
 import mongoose from 'mongoose';
+import { configurarTareasProgramadas } from './scripts/scheduledTasks.js';
 // import allCors from './middlewares/allCors.js'; // Importar el middleware de CORS sin restricciones
 
 // Configuración de variables de entorno
@@ -238,6 +239,10 @@ const iniciarTareasProgramadas = () => {
   
   // Programar ejecuciones futuras
   tareasProgramadas = setInterval(actualizarEstadoSistema, 5 * 60 * 1000);
+  
+  // Iniciar las tareas programadas para los recordatorios
+  configurarTareasProgramadas();
+  
   logger.info('Tareas programadas iniciadas correctamente');
 };
 
@@ -258,4 +263,19 @@ app.listen(PORT, () => {
   
   // Ya no ejecutamos actualizarEstadoSistema() aquí directamente
   // Se ejecutará cuando MongoDB esté conectado
-}); 
+});
+
+// Punto de entrada principal para la aplicación
+
+// Manejo de errores no capturados
+process.on('uncaughtException', (err) => {
+  logger.error(`Error no capturado: ${err.message}`);
+  logger.error(err.stack);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Promesa rechazada no manejada:');
+  logger.error(reason);
+});
+
+export default app; 
